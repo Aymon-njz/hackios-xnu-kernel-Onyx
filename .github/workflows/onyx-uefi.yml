@@ -6,6 +6,8 @@ on:
     paths:
       - '.github/workflows/onyx-uefi.yml'
       - 'common/devices/onyx.conf'
+      - 'uefi/onyx-handoff.patch'
+      - 'uefi/apply-onyx.sh'
 
 jobs:
   firmware:
@@ -23,7 +25,10 @@ jobs:
       - name: Fetch Mu-Silicium and all required submodules
         run: git clone --recursive --depth 1 https://github.com/Project-Silicium/Mu-Silicium.git Mu-Silicium
 
-      - name: Build the upstream POCO F7 / Onyx UEFI firmware
+      - name: Add the storage-safe XNU payload handoff
+        run: ./uefi/apply-onyx.sh "$GITHUB_WORKSPACE/Mu-Silicium"
+
+      - name: Build the POCO F7 / Onyx XNU handoff firmware
         working-directory: Mu-Silicium
         run: |
           python3 -m venv .venv

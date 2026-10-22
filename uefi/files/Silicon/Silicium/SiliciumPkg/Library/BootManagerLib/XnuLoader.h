@@ -5,7 +5,9 @@
 // The boot shim copies everything appended after the UEFI FD to this address.
 // The region is marked reserved in the device memory map.
 //
-#define XNU_PAYLOAD_BASE      0xF0000000ULL
+#ifndef XNU_PAYLOAD_BASE
+#define XNU_PAYLOAD_BASE      0xA8000000ULL
+#endif
 #define XNU_PAYLOAD_MAX_SIZE  0x04000000ULL
 #define XNU_PAYLOAD_MAGIC     0x50554E58 // "XNUP"
 
@@ -21,11 +23,6 @@ typedef struct {
   UINT32 Reserved;
   // UINT8 Data[Size], padded to 16 bytes
 } XNU_PAYLOAD_ENTRY;
-
-// Raw GPT partition that receives the text log (read back from Android).
-#define XNU_LOG_PARTITION  L"logdump"
-
-#define XNU_MARKER_MAGIC  0x584E5521 // "XNU!"
 
 VOID
 XnuLoaderMain ();

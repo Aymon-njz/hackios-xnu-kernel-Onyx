@@ -1,0 +1,182 @@
+diff --git a/BootShim/BootShim.S b/BootShim/BootShim.S
+index 4d20855..6385616 100644
+--- a/BootShim/BootShim.S
++++ b/BootShim/BootShim.S
+@@ -28,6 +28,27 @@ _CopyLoop:
+   stp   x2, x3, [x5], #16
+   subs  x6, x6, #16
+   b.ne  _CopyLoop
++
++#ifdef PAYLOAD_BASE
++  /* x4 now points just past the FD: copy an optional XNUP container. */
++  ldr   w2, [x4]
++  movz  w3, #0x4E58
++  movk  w3, #0x5055, lsl #16
++  cmp   w2, w3
++  b.ne  _NoPayload
++  ldr   w6, [x4, #4]
++  add   x6, x6, #23
++  and   x6, x6, #~15
++  movz  x5, #(PAYLOAD_BASE >> 16), lsl #16
++
++_PayloadLoop:
++  ldp   x2, x3, [x4], #16
++  stp   x2, x3, [x5], #16
++  subs  x6, x6, #16
++  b.ne  _PayloadLoop
++
++_NoPayload:
++#endif
+   ldr   x5, =FD_BASE
+ 
+ _Entry:
+diff --git a/Silicon/Silicium/SiliciumPkg/Library/BootManagerLib/BootManager.c b/Silicon/Silicium/SiliciumPkg/Library/BootManagerLib/BootManager.c
+index 9b18ddb..87ff2dd 100644
+--- a/Silicon/Silicium/SiliciumPkg/Library/BootManagerLib/BootManager.c
++++ b/Silicon/Silicium/SiliciumPkg/Library/BootManagerLib/BootManager.c
+@@ -22,6 +22,7 @@
+ #include <Configuration/BootDevices.h>
+ 
+ #include "BootManager.h"
++#include "XnuLoader.h"
+ 
+ //
+ // Global Variables
+@@ -203,6 +204,9 @@ PlatformBootManagerUnableToBoot ()
+ {
+   EFI_STATUS Status;
+ 
++  // The XNU payload is supplied by the temporary fastboot boot image.
++  XnuLoaderMain ();
++
+   // Execute Secondary Unable To Boot
+   DeviceBootManagerUnableToBoot ();
+ 
+diff --git a/Silicon/Silicium/SiliciumPkg/Library/BootManagerLib/BootManagerLib.inf b/Silicon/Silicium/SiliciumPkg/Library/BootManagerLib/BootManagerLib.inf
+index 2310dc6..0ef2ad5 100644
+--- a/Silicon/Silicium/SiliciumPkg/Library/BootManagerLib/BootManagerLib.inf
++++ b/Silicon/Silicium/SiliciumPkg/Library/BootManagerLib/BootManagerLib.inf
+@@ -14,6 +14,7 @@
+ 
+ [Sources]
+   BootManager.c
++  XnuLoader.c
+   KeyCallback.c
+ 
+ [Packages]
+@@ -37,6 +38,7 @@
+   BootGraphicsLib
+   DevicePathLib
+   PrintLib
++  BaseLib
+ 
+ [Pcd]
+   gEfiMdePkgTokenSpaceGuid.PcdPlatformBootTimeOut
+diff --git a/Silicon/Silicium/SiliciumPkg/Library/BootManagerLib/XnuLoader.c b/Silicon/Silicium/SiliciumPkg/Library/BootManagerLib/XnuLoader.c
+new file mode 100644
+index 0000000..4ec1d42
+--- /dev/null
++++ b/Silicon/Silicium/SiliciumPkg/Library/BootManagerLib/XnuLoader.c
+@@ -0,0 +1,66 @@
++/**
++  XNU payload handoff.
++
++  The boot shim places an appended XNUP container in reserved RAM. This
++  library starts its loader.efi entry without reading or writing Android
++  partitions; a failed handoff simply cold-resets the device.
++
++  SPDX-License-Identifier: BSD-2-Clause-Patent
++**/
++
++#include <Uefi.h>
++
++#include <Library/BaseLib.h>
++#include <Library/UefiBootServicesTableLib.h>
++#include <Library/UefiRuntimeServicesTableLib.h>
++
++#include "XnuLoader.h"
++
++STATIC
++VOID
++StartPayloadLoader (
++  VOID
++  )
++{
++  XNU_PAYLOAD_HEADER *Header = (XNU_PAYLOAD_HEADER *)XNU_PAYLOAD_BASE;
++  UINT8              *Cursor;
++  UINT8              *End;
++
++  if (Header->Magic != XNU_PAYLOAD_MAGIC || Header->Size > XNU_PAYLOAD_MAX_SIZE) {
++    return;
++  }
++
++  Cursor = (UINT8 *)(Header + 1);
++  End    = Cursor + Header->Size;
++
++  while (Cursor + sizeof (XNU_PAYLOAD_ENTRY) <= End) {
++    XNU_PAYLOAD_ENTRY *Entry = (XNU_PAYLOAD_ENTRY *)Cursor;
++    EFI_HANDLE         Handle;
++
++    if (Entry->Name[0] == 0) {
++      return;
++    }
++
++    if (Entry->Size > (UINTN)(End - (UINT8 *)(Entry + 1))) {
++      return;
++    }
++
++    if (AsciiStrnCmp (Entry->Name, "loader.efi", sizeof (Entry->Name)) == 0) {
++      if (!EFI_ERROR (gBS->LoadImage (FALSE, gImageHandle, NULL, Entry + 1, Entry->Size, &Handle))) {
++        gBS->StartImage (Handle, NULL, NULL);
++      }
++      return;
++    }
++
++    Cursor += sizeof (XNU_PAYLOAD_ENTRY) + ALIGN_VALUE (Entry->Size, 16);
++  }
++}
++
++VOID
++XnuLoaderMain (
++  VOID
++  )
++{
++  StartPayloadLoader ();
++  gRT->ResetSystem (EfiResetCold, EFI_SUCCESS, 0, NULL);
++}
+diff --git a/Silicon/Silicium/SiliciumPkg/Library/BootManagerLib/XnuLoader.h b/Silicon/Silicium/SiliciumPkg/Library/BootManagerLib/XnuLoader.h
+new file mode 100644
+index 0000000..2eeffbb
+--- /dev/null
++++ b/Silicon/Silicium/SiliciumPkg/Library/BootManagerLib/XnuLoader.h
+@@ -0,0 +1,30 @@
++#ifndef _XNU_LOADER_H_
++#define _XNU_LOADER_H_
++
++//
++// The boot shim copies everything appended after the UEFI FD to this address.
++// The region is marked reserved in the device memory map.
++//
++#ifndef XNU_PAYLOAD_BASE
++#define XNU_PAYLOAD_BASE      0xA8000000ULL
++#endif
++#define XNU_PAYLOAD_MAX_SIZE  0x04000000ULL
++#define XNU_PAYLOAD_MAGIC     0x50554E58 // "XNUP"
++
++typedef struct {
++  UINT32 Magic;
++  UINT32 Size;
++} XNU_PAYLOAD_HEADER;
++
++// The header is followed by entries; an empty name ends the list.
++typedef struct {
++  CHAR8  Name[16];
++  UINT32 Size;
++  UINT32 Reserved;
++  // UINT8 Data[Size], padded to 16 bytes
++} XNU_PAYLOAD_ENTRY;
++
++VOID
++XnuLoaderMain ();
++
++#endif /* _XNU_LOADER_H_ */
