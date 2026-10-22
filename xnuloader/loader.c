@@ -4006,7 +4006,12 @@ efi_main(efi_handle image, efi_system_table *st)
 		usb_trace = pi.trace_mode;
 		print("starting USB loader\n");
 		if (usb_start()) {
-			flush_log();
+			/*
+			 * The redwood port persisted this startup log to a raw "logdump"
+			 * GPT partition. Onyx has no such partition; probing it after USB
+			 * startup can reset the UFS controller before the command loop runs.
+			 */
+			print("USB command loop ready\n");
 			usb_command_loop();
 		}
 		/* Keep the UEFI console message visible for capture on a new port. */
