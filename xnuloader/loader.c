@@ -15,7 +15,9 @@
 /* ------------------------------------------------------------------------ */
 /* Fixed conventions shared with the boot shim, the packer and the kernel   */
 
+#ifndef PAYLOAD_BASE
 #define PAYLOAD_BASE        0xF0000000ULL
+#endif
 #define PAYLOAD_MAGIC       0x50554E58u /* "XNUP" */
 
 struct payload_header { uint32_t magic; uint32_t size; };
@@ -554,12 +556,27 @@ static const struct platform platform_redwood = {
 };
 
 /*
+ * Xiaomi POCO F7 / Redmi Turbo 4 Pro (onyx, SM8735/Pakala).
+ * Addresses and display geometry come from the phone's live Android DTB and
+ * Mu-Silicium's upstream onyxPkg.  Do not mark a core as slow until its
+ * capacity data is verified: this only affects XNU's optional scheduler hint.
+ */
+static const struct platform platform_onyx = {
+	.name = "onyx", .io_base = 0x00400000, .io_size = 0x3FC00000,
+	.gic_dist = 0x17100000, .gic_redist = 0x17180000, .uart = 0, .log_other_cpu = 1,
+	.cores = 8, .core_shift = 8,
+	.small_cores = 0,
+	.fb_base = 0xFC800000,
+};
+
+/*
  * The devices the loader knows, told apart by the framebuffer base their UEFI reports. A port to another
  * device adds its description here (common/new-device.sh writes a starting point, docs/PORTING.md says
  * where each value comes from); a display that matches none is QEMU's ramfb.
  */
 static const struct platform *const platforms[] = {
 	&platform_redwood,
+	&platform_onyx,
 };
 
 /* ------------------------------------------------------------------------ */
