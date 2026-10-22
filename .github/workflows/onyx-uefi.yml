@@ -1,0 +1,38 @@
+name: Build Onyx UEFI
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/onyx-uefi.yml'
+      - 'common/devices/onyx.conf'
+
+jobs:
+  firmware:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install UEFI build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git lld nasm gcc-aarch64-linux-gnu \
+            build-essential mono-devel nuget python3-venv python3-pip \
+            gettext uuid-dev
+
+      - name: Fetch Mu-Silicium and all required submodules
+        run: git clone --recursive --depth 1 https://github.com/Project-Silicium/Mu-Silicium.git Mu-Silicium
+
+      - name: Build the upstream POCO F7 / Onyx UEFI firmware
+        working-directory: Mu-Silicium
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install -r pip-requirements.txt
+          CLANGPDB_AARCH64_PREFIX=aarch64-linux-gnu- .venv/bin/python build_uefi.py -d onyx -r RELEASE
+
+      - name: Publish firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: onyx-uefi
+          path: Mu-Silicium/Build/onyxPkg/RELEASE_CLANGPDB/FV/SILICIUM_UEFI.fd
+          if-no-files-found: error
