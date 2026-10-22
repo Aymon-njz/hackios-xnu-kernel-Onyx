@@ -70,6 +70,15 @@ typedef struct {
 	    const void *ctx, const efi_guid *group, void **event);
 } efi_boot_services;
 
+/* UEFI event services used by the USB loader watchdog heartbeat. */
+typedef void (EFIAPI *efi_event_notify)(void *event, void *context);
+typedef efi_status (EFIAPI *efi_create_event)(uint32_t type, uint64_t tpl,
+    efi_event_notify notify, void *context, void **event);
+typedef efi_status (EFIAPI *efi_set_timer)(void *event, uint32_t type,
+    uint64_t trigger_time);
+
+enum { EfiTimerCancel = 0, EfiTimerPeriodic = 1, EfiTimerRelative = 2 };
+
 struct efi_time {
 	uint16_t year;
 	uint8_t  month, day, hour, minute, second, pad1;

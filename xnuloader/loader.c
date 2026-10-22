@@ -3450,6 +3450,38 @@ static int download_to_ramdisk;     /* set by "oem ramdisk" for the one download
 static uint8_t *usb_rx_buf, *usb_tx_buf;
 static int usb_connected;
 static int usb_trace;
+static void *usb_wdt_event;
+
+/*
+ * On Onyx, UsbDeviceDxe's HandleEvent() is a blocking wait.  The watchdog
+ * cannot be serviced from the command loop while it waits for the host, so
+ * keep it alive from a Boot Services timer instead.  The callback does not
+ * touch USB state and remains valid for the lifetime of the loader.
+ */
+static void EFIAPI
+usb_watchdog_heartbeat(void *event, void *context)
+{
+	wdt_pet();
+}
+
+static void
+usb_start_watchdog_heartbeat(void)
+{
+	efi_create_event create_event = (efi_create_event)BS->create_event;
+	efi_set_timer set_timer = (efi_set_timer)BS->set_timer;
+
+	if (usb_wdt_event != NULL || create_event == NULL || set_timer == NULL) {
+		return;
+	}
+	/* EVT_TIMER | EVT_NOTIFY_SIGNAL, at TPL_CALLBACK; 100 ns units. */
+	if (EFI_ERROR(create_event(0x80000200, 8, usb_watchdog_heartbeat, NULL, &usb_wdt_event)) ||
+	    EFI_ERROR(set_timer(usb_wdt_event, EfiTimerPeriodic, 5000000))) {
+		usb_wdt_event = NULL;
+		print("usb: watchdog heartbeat unavailable\n");
+		return;
+	}
+	print("usb: watchdog heartbeat armed\n");
+}
 
 static void
 usb_trace_pause(const char *stage)
@@ -3537,6 +3569,8 @@ usb_start(void)
 		return 0;
 	}
 	usb_trace_pause("device protocol started");
+	/* Must be armed before the first HandleEvent(), which blocks on this UEFI. */
+	usb_start_watchdog_heartbeat();
 	if (EFI_ERROR(USB->allocate_transfer_buffer(USB_CHUNK, (void **)&usb_rx_buf)) ||
 	    EFI_ERROR(USB->allocate_transfer_buffer(USB_CHUNK, (void **)&usb_tx_buf))) {
 		print("usb: no transfer buffers\n");
