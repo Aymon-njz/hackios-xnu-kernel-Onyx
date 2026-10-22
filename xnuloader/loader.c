@@ -3446,6 +3446,16 @@ static usb_device_protocol *USB;
 static int download_to_ramdisk;     /* set by "oem ramdisk" for the one download that follows */
 static uint8_t *usb_rx_buf, *usb_tx_buf;
 static int usb_connected;
+static int usb_trace;
+
+static void
+usb_trace_pause(const char *stage)
+{
+	if (usb_trace) {
+		print("usb trace: %s\n", stage);
+		BS->stall(3000000);
+	}
+}
 
 static const uint8_t usb_dev_desc[18] = { 18, 1, 0x10, 0x02, 0, 0, 0, 64, 0xd1, 0x18, 0x0d, 0xd0, 0x00, 0x01, 1, 2, 3, 1 };
 static const uint8_t usb_ss_dev_desc[18] = { 18, 1, 0x00, 0x03, 0, 0, 0, 9, 0xd1, 0x18, 0x0d, 0xd0, 0x00, 0x01, 1, 2, 3, 1 };
@@ -3490,15 +3500,18 @@ usb_start(void)
 	void *event;
 
 	/* Ask the platform to bring the controller up in peripheral mode (as the stock fastboot does). */
+	usb_trace_pause("requesting peripheral mode");
 	if (!EFI_ERROR(BS->create_event_ex(0x200 /* EVT_NOTIFY_SIGNAL */, 8 /* TPL_CALLBACK */, usb_dummy_notify, NULL,
 	    &init_guid, &event))) {
 		BS->signal_event(event);
 		BS->close_event(event);
 	}
+	usb_trace_pause("peripheral mode requested");
 	if (EFI_ERROR(BS->locate_protocol(&usb_guid, NULL, (void **)&USB))) {
 		print("usb: device protocol not found\n");
 		return 0;
 	}
+	usb_trace_pause("device protocol found");
 	set.device_descriptor = usb_dev_desc;
 	set.descriptors = &cfg;
 	set.ss_device_descriptor = usb_ss_dev_desc;
@@ -3507,11 +3520,13 @@ usb_start(void)
 	set.bos = usb_bos;
 	set.string_count = 5;
 	set.strings = strings;
+	usb_trace_pause("starting device protocol");
 	efi_status s = USB->start_ex(&set);
 	if (EFI_ERROR(s)) {
 		print("usb: start failed %x\n", s);
 		return 0;
 	}
+	usb_trace_pause("device protocol started");
 	if (EFI_ERROR(USB->allocate_transfer_buffer(USB_CHUNK, (void **)&usb_rx_buf)) ||
 	    EFI_ERROR(USB->allocate_transfer_buffer(USB_CHUNK, (void **)&usb_tx_buf))) {
 		print("usb: no transfer buffers\n");
@@ -3975,17 +3990,18 @@ efi_main(efi_handle image, efi_system_table *st)
 
 	int have_payload = parse_payload(&pi, 0);
 	if (have_payload && pi.trace_mode) {
-		print("XNU loader handoff reached; USB starts in five seconds\\n");
+		print("XNU loader handoff reached; USB starts in five seconds\n");
 		BS->stall(5000000);
 	}
 	if (have_payload && pi.usb_mode) {
-		print("starting USB loader\\n");
+		usb_trace = pi.trace_mode;
+		print("starting USB loader\n");
 		if (usb_start()) {
 			flush_log();
 			usb_command_loop();
 		}
 		/* Keep the UEFI console message visible for capture on a new port. */
-		print("USB loader did not start; holding for ten seconds\\n");
+		print("USB loader did not start; holding for ten seconds\n");
 		BS->stall(10000000);
 	}
 
