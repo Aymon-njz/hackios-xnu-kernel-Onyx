@@ -3520,8 +3520,13 @@ usb_start(void)
 	set.bos = usb_bos;
 	set.string_count = 5;
 	set.strings = strings;
-	usb_trace_pause("starting device protocol");
-	efi_status s = USB->start_ex(&set);
+	/*
+	 * Onyx's vendor UsbDeviceDxe reports StartEx success but does not expose a
+	 * SuperSpeed device to the host. Start with the older High-Speed interface,
+	 * which is the protocol the firmware's own Android fastboot transport uses.
+	 */
+	usb_trace_pause("starting USB 2 device protocol");
+	efi_status s = USB->start(usb_dev_desc, &cfg, usb_qualifier, NULL, 5, strings);
 	if (EFI_ERROR(s)) {
 		print("usb: start failed %x\n", s);
 		return 0;

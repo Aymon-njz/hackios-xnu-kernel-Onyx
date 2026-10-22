@@ -237,7 +237,9 @@ typedef struct {
 
 typedef struct {
 	uint64_t revision;
-	void *start;
+	efi_status (EFIAPI *start)(const void *device_descriptor, const void **descriptors,
+	    const void *device_qualifier, const void *binary_object_store,
+	    uint8_t string_count, const void **strings);
 	efi_status (*send)(uint8_t endpoint, uint64_t size, void *buffer);
 	efi_status (EFIAPI *handle_event)(uint32_t *event, uint64_t *size, usb_device_event_data *data);
 	efi_status (EFIAPI *allocate_transfer_buffer)(uint64_t size, void **buffer);
