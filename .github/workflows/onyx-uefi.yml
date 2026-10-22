@@ -16,7 +16,7 @@ jobs:
       - name: Install UEFI build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y git lld nasm gcc-aarch64-linux-gnu \
+          sudo apt-get install -y git llvm lld nasm gcc-aarch64-linux-gnu \
           build-essential mono-devel python3-venv python3-pip \
             gettext uuid-dev
 
