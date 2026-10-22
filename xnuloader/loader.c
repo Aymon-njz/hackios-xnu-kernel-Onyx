@@ -3453,7 +3453,9 @@ usb_trace_pause(const char *stage)
 {
 	if (usb_trace) {
 		print("usb trace: %s\n", stage);
+		wdt_pet();
 		BS->stall(3000000);
+		wdt_pet();
 	}
 }
 
@@ -3996,7 +3998,9 @@ efi_main(efi_handle image, efi_system_table *st)
 	int have_payload = parse_payload(&pi, 0);
 	if (have_payload && pi.trace_mode) {
 		print("XNU loader handoff reached; USB starts in five seconds\n");
+		wdt_pet();
 		BS->stall(5000000);
+		wdt_pet();
 	}
 	if (have_payload && pi.usb_mode) {
 		usb_trace = pi.trace_mode;
