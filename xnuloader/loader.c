@@ -3557,10 +3557,15 @@ usb_wait(uint8_t endpoint)
 
 	for (;;) {
 		uint32_t msg = UsbDeviceEventNoEvent;
-		uint64_t size = 0;
+		uint64_t size = sizeof(usb_device_event_data);
 		usb_device_event_data data;
 
-		USB->handle_event(&msg, &size, &data);
+		if (EFI_ERROR(USB->handle_event(&msg, &size, &data))) {
+			print("usb: event poll failed; holding for ten seconds\n");
+			wdt_pet();
+			BS->stall(10000000);
+			return -1;
+		}
 		if (msg == UsbDeviceEventDeviceStateChange) {
 			usb_connected = (data.device_state == UsbDeviceStateConnected);
 			return -1;
@@ -3823,7 +3828,7 @@ static void
 usb_poll_command(void)
 {
 	uint32_t msg = UsbDeviceEventNoEvent;
-	uint64_t size = 0, n;
+	uint64_t size = sizeof(usb_device_event_data), n;
 	usb_device_event_data data;
 	char cmd[128];
 
