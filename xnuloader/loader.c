@@ -2520,6 +2520,7 @@ struct payload_info {
 	uint64_t forced_base;
 	uint64_t resident_rd;           /* size of a root image the host put at the resident address */
 	int usb_mode;
+	int trace_mode;                 /* leave an observable pre-USB handoff checkpoint */
 };
 
 static uint64_t
@@ -2572,6 +2573,8 @@ parse_payload(struct payload_info *pi, int verbose)
 			pi->checkpoint = parse_number(text, 10);  /* where the kernel should stop and come back */
 		} else if (str_eq(e->name, "usb")) {
 			pi->usb_mode = 1;                         /* stay in the loader and take commands over USB */
+		} else if (str_eq(e->name, "trace")) {
+			pi->trace_mode = 1;
 		}
 		p += sizeof(*e) + ((e->size + 15) & ~15u);
 	}
@@ -3971,6 +3974,10 @@ efi_main(efi_handle image, efi_system_table *st)
 	wdt_arm();
 
 	int have_payload = parse_payload(&pi, 0);
+	if (have_payload && pi.trace_mode) {
+		print("XNU loader handoff reached; USB starts in five seconds\\n");
+		BS->stall(5000000);
+	}
 	if (have_payload && pi.usb_mode && usb_start()) {
 		flush_log();
 		usb_command_loop();
