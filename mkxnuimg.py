@@ -16,7 +16,7 @@ Another device (common/devices/<name>.conf, read by common/build.sh) sets these 
   UEFI_TARGET   Mu-Silicium device name (default redwood)    UEFI_FD, DTB   files to use instead
   FD_BASE, FD_SIZE, PAYLOAD_BASE                              addresses from its UEFI port's memory map
 """
-import argparse, gzip, os, subprocess, sys
+import argparse, gzip, os, shutil, subprocess, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 MU = os.path.join(HERE, 'Mu-Silicium')
@@ -41,9 +41,21 @@ if os.path.isfile(fd_path) and os.path.isdir(os.path.join(MU, 'BootShim')):
     for f in ('BootShim.elf', 'BootShim.bin'):
         try: os.unlink(os.path.join(shim_dir, f))
         except FileNotFoundError: pass
-    subprocess.check_call(['make', 'REQUIRES_KERNEL_HEADER=1', f'FD_BASE={FD_BASE:#x}', f'FD_SIZE={FD_SIZE:#x}',
-                           f'CFLAGS=--target=aarch64-linux-gnu -DPAYLOAD_BASE={PAYLOAD_BASE:#x}'],
-                          cwd=shim_dir, stdout=subprocess.DEVNULL)
+    shim_env = os.environ.copy()
+    llvm_objcopy = shutil.which('llvm-objcopy', path=shim_env.get('PATH'))
+    if llvm_objcopy is None and sys.platform == 'darwin':
+        brew_bin = shutil.which('brew') or '/opt/homebrew/bin/brew'
+        brew = subprocess.run([brew_bin, '--prefix', 'llvm'], text=True, capture_output=True)
+        if brew.returncode == 0:
+            candidate = os.path.join(brew.stdout.strip(), 'bin', 'llvm-objcopy')
+            if os.path.isfile(candidate):
+                llvm_objcopy = candidate
+    make_cmd = ['make', 'REQUIRES_KERNEL_HEADER=1', f'FD_BASE={FD_BASE:#x}', f'FD_SIZE={FD_SIZE:#x}',
+                f'CFLAGS=--target=aarch64-linux-gnu -DPAYLOAD_BASE={PAYLOAD_BASE:#x}']
+    if llvm_objcopy:
+        make_cmd.append(f'OBJCOPY={llvm_objcopy}')
+    subprocess.check_call(make_cmd,
+                          cwd=shim_dir, stdout=subprocess.DEVNULL, env=shim_env)
     parts = {'shim': os.path.join(shim_dir, 'BootShim.bin'), 'fd': fd_path,
              'dtb': os.path.join(MU, f'Resources/DTBs/{TARGET}.dtb'), 'ramdisk': os.path.join(MU, 'Resources/ramdisk'),
              'mkbootimg': os.path.join(MU, 'Resources/Scripts/mkbootimg.py')}

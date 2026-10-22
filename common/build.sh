@@ -54,6 +54,6 @@ if ! skip boot && [ "$KIND" = phone ]; then
 	L=xnuloader/loader.efi; [ -f $L ] || L=prebuilt/loader.efi
 	python3 xnuloader/mkpayload.py -o out/usb-payload.bin loader.efi=$L --usb > /dev/null
 	FD_BASE=$FD_BASE FD_SIZE=$FD_SIZE PAYLOAD_BASE=$PAYLOAD_BASE BOOT_HEADER_VERSION=${BOOT_HEADER_VERSION:-} UEFI_FD=$UEFI_FD DTB=$DTB UEFI_TARGET=$UEFI_TARGET \
-		python3 mkxnuimg.py -p out/usb-payload.bin -o out/$DEVICE-boot.img
+		python3 mkxnuimg.py -p out/usb-payload.bin -o out/$DEVICE-boot.img || die "boot image packaging failed"
 	echo "build: out/$DEVICE-boot.img -- boot it with: fastboot boot out/$DEVICE-boot.img (or common/run.sh $DEVICE)"
 fi
