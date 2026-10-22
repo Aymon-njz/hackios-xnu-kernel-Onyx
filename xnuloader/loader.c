@@ -2484,7 +2484,10 @@ exception_handler(int64_t type, uint64_t *ctx)
 	    ctx[EXC_CTX_ESR], ctx[EXC_CTX_FAR], ctx[EXC_CTX_LR], ctx[EXC_CTX_SP], ctx[EXC_CTX_SPSR]);
 	print("loader image base %x (elr offset %x)\n", (uint64_t)(uintptr_t)&__ImageBase,
 	    ctx[EXC_CTX_ELR] - (uint64_t)(uintptr_t)&__ImageBase);
-	flush_log();
+	/* Onyx has no legacy logdump partition; keep the actual fault visible. */
+	print("holding exception screen for twenty seconds\n");
+	wdt_pet();
+	BS->stall(20000000);
 	ST->rt->reset_system(0 /* EfiResetCold */, 0, 0, NULL);
 	for (;;) {
 	}
