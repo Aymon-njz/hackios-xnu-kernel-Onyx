@@ -3978,9 +3978,15 @@ efi_main(efi_handle image, efi_system_table *st)
 		print("XNU loader handoff reached; USB starts in five seconds\\n");
 		BS->stall(5000000);
 	}
-	if (have_payload && pi.usb_mode && usb_start()) {
-		flush_log();
-		usb_command_loop();
+	if (have_payload && pi.usb_mode) {
+		print("starting USB loader\\n");
+		if (usb_start()) {
+			flush_log();
+			usb_command_loop();
+		}
+		/* Keep the UEFI console message visible for capture on a new port. */
+		print("USB loader did not start; holding for ten seconds\\n");
+		BS->stall(10000000);
 	}
 
 	/* One-shot mode: run the kernel that came with the image, then reset. */
