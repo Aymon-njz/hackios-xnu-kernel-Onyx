@@ -1548,7 +1548,10 @@ redwood_ufs_init(void)
 	 */
 	check = 0;
 	memset(ufs_lun, 0xff, sizeof(ufs_lun));
-	if (PE_parse_boot_argn("ufs_native", &check, sizeof(check)) && check != 0) {
+	int native_requested = PE_parse_boot_argn("ufs_native", &check, sizeof(check));
+
+	printf("ufs: native: boot argument %s (value %u)\n", native_requested ? "found" : "missing", check);
+	if (native_requested && check != 0) {
 		struct ufshc_loader offer = {
 			.hc_pa = ufs_page->native.hc_pa, .area_pa = ufs_page->native.area_pa,
 			.area_size = ufs_page->native.area_size, .ucd_offset = ufs_page->native.ucd_offset,
