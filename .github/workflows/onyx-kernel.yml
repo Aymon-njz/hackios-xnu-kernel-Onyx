@@ -34,7 +34,9 @@ jobs:
 
       - name: Build the patched ARM64 kernel
         run: |
-          ./xnu-build.sh -j"$(nproc)" -k || test -f xnu-src/xnu-8796.121.2/BUILD/obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837
+          kernel=xnu-src/xnu-8796.121.2/BUILD/obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837
+          ./xnu-build.sh -j"$(nproc)" -k || test -f "$kernel" -o -f "$kernel.unstripped"
+          test -f "$kernel" || cp "$kernel.unstripped" "$kernel"
 
       - name: Verify the Onyx native-UFS path is present
         run: |
