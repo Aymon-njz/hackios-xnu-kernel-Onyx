@@ -27,6 +27,9 @@ extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 
 #define GPIO_CFG(base, n)        ((base) + 0x1000UL * (n))
 #define GPIO_IO(base, n)         ((base) + 0x1000UL * (n) + 4)
+#define GENI_FORCE_DEFAULT(base) ((base) + 0x020)
+#define GENI_OUTPUT_CTRL(base)   ((base) + 0x024)
+#define GENI_CGC_CTRL(base)      ((base) + 0x028)
 #define GENI_STATUS(base)        ((base) + 0x040)
 #define GENI_SER_M_CLK_CFG(base) ((base) + 0x048)
 #define GENI_IF_DISABLE_RO(base) ((base) + 0x064)
