@@ -210,10 +210,13 @@ onyx_touch_probe_thread(__unused void *parameter, __unused wait_result_t result)
 		return;
 	}
 	printf("onyx-touch: QUPv3 SE4 mapped at %#lx\n", (unsigned long)se);
-	printf("onyx-touch: stage 2 MMIO: SE fw %#x fifo-if %#x status %#x clk %#x hw %#x; gpio irq78=%u cs19=%u\n",
-	    onyx_touch_rd(GENI_FW_REVISION_RO(se)), onyx_touch_rd(GENI_IF_DISABLE_RO(se)),
-	    onyx_touch_rd(GENI_STATUS(se)), onyx_touch_rd(GENI_SER_M_CLK_CFG(se)), onyx_touch_rd(SE_HW_PARAM_0(se)),
-	    onyx_touch_rd(GPIO_IO(tlmm, 78)) & 1, onyx_touch_rd(GPIO_IO(tlmm, 19)) & 1);
+	/*
+	 * Onyx assigns the touch bus to Qualcomm Trusted Touch.  The mappings are
+	 * valid, but a load from the peripheral causes the secure monitor to reset
+	 * the non-secure OS until its ownership handoff has run.  Do not turn a
+	 * diagnostic boot into a reboot loop while that handoff is being ported.
+	 */
+	printf("onyx-touch: SE4 is Trusted-Touch owned; raw access remains disabled pending VM handoff\n");
 }
 
 void
