@@ -1197,8 +1197,14 @@ ufshc_probe(const struct ufshc_loader *loader, bool only)
 		no = "no device present or the transfer list not ready";
 	} else if ((rsr & 1) == 0) {
 		no = "the transfer list is not running";
-	} else if (ver < 0x200 || ver >= 0x400) {
-		no = "a controller version other than 2.x or 3.x";
+	/*
+	 * Onyx's Qualcomm controller reports UFSHCI 4.0 (0x00000400).
+	 * This driver only uses the transfer-request-list register subset, which
+	 * remains compatible through 4.x; keep newer, unvalidated major versions
+	 * rejected rather than relaxing the gate indefinitely.
+	 */
+	} else if (ver < 0x200 || ver >= 0x500) {
+		no = "a controller version other than 2.x, 3.x, or 4.x";
 	} else if (CAP_NUTRS(cap) < SLOTS) {
 		no = "fewer than 32 slots";
 	} else if ((cap & CAP_64AS) == 0) {
