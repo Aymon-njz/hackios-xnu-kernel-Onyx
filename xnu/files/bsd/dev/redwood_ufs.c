@@ -1070,7 +1070,7 @@ ufs_entry(const char *name)
  * first, with UEFI's list in; then this kernel's list goes in (with its proof) and stays in.
  */
 static bool
-ufs_native_map(bool all_units)
+ufs_native_map(bool all_units, bool trust_lun0)
 {
 	uint8_t *mine = kalloc_data(4096, Z_WAITOK), *theirs = kalloc_data(BLOCK_MAX_UNITS * 4096, Z_WAITOK);
 	uint32_t units[BLOCK_MAX_UNITS], n = 0, mask = 0, darwin = ufs_entry("darwin");
@@ -1082,6 +1082,23 @@ ufs_native_map(bool all_units)
 
 		if ((e->flags & BLOCK_PART_UNIT) == 0 || e->unit >= 8) {
 			continue;
+		}
+		/*
+		 * A normal native run compares each unit's GPT through the resident
+		 * loader before taking over its transfer list.  On Onyx the loader is
+		 * intentionally not polled after XNU starts, so that comparison would
+		 * wait for a mailbox reply that cannot arrive.  This opt-in mode maps
+		 * only LUN 0, which is the loader-described unit containing userdata;
+		 * the driver still proves its own list and permits read commands only.
+		 */
+		if (trust_lun0) {
+			if (e->unit != 0) {
+				continue;
+			}
+			units[n++] = i;
+			mask = 1;
+			ufs_native_luns = n;
+			break;
 		}
 		if (!all_units && (darwin == BLOCK_MAX_PARTS || ufs_page->part[darwin].unit != e->unit)) {
 			continue;
@@ -1096,15 +1113,15 @@ ufs_native_map(bool all_units)
 		mask |= 1u << e->unit;
 		ufs_native_luns = n;
 	}
-	if (good && !all_units && (n != 1 || ufs_page->part[units[0]].unit != 0)) {
-		printf("ufs: native: darwin is not on the first unit the loader lists: not LUN 0, not read here\n");
+	if (good && (trust_lun0 || !all_units) && (n != 1 || ufs_page->part[units[0]].unit != 0)) {
+		printf("ufs: native: the selected unit is not LUN 0, not read here\n");
 		good = false;
 	}
 	ufshc_set_luns(mask);
 	if (good && ufs_native_in(true) != 0) {
 		good = false;
 	}
-	for (uint32_t k = 0; good && k < n; k++) {
+	for (uint32_t k = 0; good && !trust_lun0 && k < n; k++) {
 		volatile struct loader_block_part *e = &ufs_page->part[units[k]];
 
 		if (ufshc_read((uint8_t)e->unit, 4096, mine, 4096) != 0 || memcmp(mine, theirs + k * 4096, 4096) != 0) {
@@ -1544,7 +1561,8 @@ redwood_ufs_init(void)
 	/*
 	 * ufs_native=1: through this kernel's own driver instead, its own transfer list in the
 	 * controller for the run, if all is as expected; 2: only look; 3: a dry run -- the list in and
-	 * out again, and in once more for the end of the run to take out, no command sent.
+	 * out again, and in once more for the end of the run to take out, no command sent; 4: Onyx's
+	 * loaderless path, with its declared LUN 0 mapped without a mailbox comparison.
 	 */
 	check = 0;
 	memset(ufs_lun, 0xff, sizeof(ufs_lun));
@@ -1578,7 +1596,7 @@ redwood_ufs_init(void)
 				ufs_native_in(false);
 				printf("ufs: native: dry run: the list stays in for the end of the run\n");
 			}
-		} else if (ufs_native_map(true)) {
+		} else if (ufs_native_map(true, mode == 4)) {
 			ufs_native_mapped = true;
 			if (compare != 0) {
 				/* right here, in bsd_init's thread, and then back to the loader */
