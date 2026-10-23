@@ -9,7 +9,10 @@
  * Enable only with `onyx_touch_probe=1`. A later report reader must remain
  * firmware-free and separate from this discovery path.
  */
+#include <kern/clock.h>
+#include <kern/thread.h>
 #include <libkern/libkern.h>
+#include <mach/mach_types.h>
 #include <pexpert/pexpert.h>
 #include <sys/redwood_input.h>
 #include <sys/systm.h>
@@ -34,21 +37,19 @@ onyx_touch_rd(vm_offset_t address)
 	return *(volatile uint32_t *)address;
 }
 
-void
-onyx_touch_init(void)
+static void
+onyx_touch_probe_thread(__unused void *parameter, __unused wait_result_t result)
 {
-	int enabled = 0, mmio = 0;
+	int mmio = 0;
 	vm_offset_t tlmm, se;
 
-	if (!PE_parse_boot_argn("onyx_touch_probe", &enabled, sizeof(enabled)) || enabled != 1) {
-		return;
-	}
+	/* Avoid early platform bring-up: this runs after bsd_init has released its thread. */
+	delay_for_interval(5, NSEC_PER_SEC);
 	/*
-	 * A first attempt at the following read during early XNU start reset the
-	 * Onyx before it reached iOS.  Keep the normal probe entirely passive:
-	 * only an explicit second-stage argument is allowed to map this peripheral.
+	 * The normal probe remains passive.  A second-stage argument is required
+	 * before this thread maps even the read-only controller registers.
 	 */
-	printf("onyx-touch: stage 1 only; NT38771 PID 0x5998, SPI4/SE4 %#x, event buffer %#x\n",
+	printf("onyx-touch: deferred stage 1; NT38771 PID 0x5998, SPI4/SE4 %#x, event buffer %#x\n",
 	    ONYX_SE4_PHYS, 0x031400);
 	if (!PE_parse_boot_argn("onyx_touch_mmio", &mmio, sizeof(mmio)) || mmio != 1) {
 		return;
@@ -63,4 +64,18 @@ onyx_touch_init(void)
 	    onyx_touch_rd(GENI_FW_REVISION_RO(se)), onyx_touch_rd(GENI_IF_DISABLE_RO(se)),
 	    onyx_touch_rd(GENI_STATUS(se)), onyx_touch_rd(GENI_SER_M_CLK_CFG(se)), onyx_touch_rd(SE_HW_PARAM_0(se)),
 	    onyx_touch_rd(GPIO_IO(tlmm, 78)) & 1, onyx_touch_rd(GPIO_IO(tlmm, 19)) & 1);
+}
+
+void
+onyx_touch_init(void)
+{
+	int enabled = 0;
+	thread_t thread;
+
+	if (!PE_parse_boot_argn("onyx_touch_probe", &enabled, sizeof(enabled)) || enabled != 1) {
+		return;
+	}
+	if (kernel_thread_start(onyx_touch_probe_thread, NULL, &thread) == KERN_SUCCESS) {
+		thread_deallocate(thread);
+	}
 }
