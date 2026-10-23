@@ -25,7 +25,21 @@ jobs:
             flex bison m4 autoconf automake libtinfo6 uuid-dev
 
       - name: Install the Linux iOS toolchain and SDK
-        run: CI=1 bash -c "$(curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-theos)"
+        env:
+          # The Theos SDK installer queries api.github.com.  Supplying the
+          # Actions token avoids anonymous API throttling on hosted runners.
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          for attempt in 1 2 3; do
+            if CI=1 bash -c "$(curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-theos)"; then
+              break
+            fi
+            if [ "$attempt" = 3 ]; then
+              exit 1
+            fi
+            sleep "$((attempt * 5))"
+          done
+          find "$THEOS/sdks" -maxdepth 1 -type d -name 'iPhoneOS*.sdk' -print -quit | grep -q .
 
       - name: Fetch and patch XNU
         run: |
