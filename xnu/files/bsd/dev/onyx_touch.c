@@ -37,10 +37,20 @@ onyx_touch_rd(vm_offset_t address)
 void
 onyx_touch_init(void)
 {
-	int enabled = 0;
+	int enabled = 0, mmio = 0;
 	vm_offset_t tlmm, se;
 
 	if (!PE_parse_boot_argn("onyx_touch_probe", &enabled, sizeof(enabled)) || enabled != 1) {
+		return;
+	}
+	/*
+	 * A first attempt at the following read during early XNU start reset the
+	 * Onyx before it reached iOS.  Keep the normal probe entirely passive:
+	 * only an explicit second-stage argument is allowed to map this peripheral.
+	 */
+	printf("onyx-touch: stage 1 only; NT38771 PID 0x5998, SPI4/SE4 %#x, event buffer %#x\n",
+	    ONYX_SE4_PHYS, 0x031400);
+	if (!PE_parse_boot_argn("onyx_touch_mmio", &mmio, sizeof(mmio)) || mmio != 1) {
 		return;
 	}
 	tlmm = ml_io_map(ONYX_TLMM_PHYS, ONYX_TLMM_SIZE);
@@ -49,9 +59,7 @@ onyx_touch_init(void)
 		printf("onyx-touch: cannot map TLMM or QUPv3 SE4\n");
 		return;
 	}
-	printf("onyx-touch: probe only; NT38771 PID 0x5998, SPI4/SE4 %#x, event buffer %#x\n",
-	    ONYX_SE4_PHYS, 0x031400);
-	printf("onyx-touch: SE fw %#x fifo-if %#x status %#x clk %#x hw %#x; gpio irq78=%u cs19=%u\n",
+	printf("onyx-touch: stage 2 MMIO: SE fw %#x fifo-if %#x status %#x clk %#x hw %#x; gpio irq78=%u cs19=%u\n",
 	    onyx_touch_rd(GENI_FW_REVISION_RO(se)), onyx_touch_rd(GENI_IF_DISABLE_RO(se)),
 	    onyx_touch_rd(GENI_STATUS(se)), onyx_touch_rd(GENI_SER_M_CLK_CFG(se)), onyx_touch_rd(SE_HW_PARAM_0(se)),
 	    onyx_touch_rd(GPIO_IO(tlmm, 78)) & 1, onyx_touch_rd(GPIO_IO(tlmm, 19)) & 1);
