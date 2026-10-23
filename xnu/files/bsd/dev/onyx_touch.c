@@ -199,11 +199,17 @@ onyx_touch_probe_thread(__unused void *parameter, __unused wait_result_t result)
 		return;
 	}
 	tlmm = ml_io_map(ONYX_TLMM_PHYS, ONYX_TLMM_SIZE);
-	se = ml_io_map(ONYX_SE4_PHYS, ONYX_SE_SIZE);
-	if (!tlmm || !se) {
-		printf("onyx-touch: cannot map TLMM or QUPv3 SE4\n");
+	if (!tlmm) {
+		printf("onyx-touch: cannot map TLMM\n");
 		return;
 	}
+	printf("onyx-touch: TLMM mapped at %#lx\n", (unsigned long)tlmm);
+	se = ml_io_map(ONYX_SE4_PHYS, ONYX_SE_SIZE);
+	if (!se) {
+		printf("onyx-touch: cannot map QUPv3 SE4\n");
+		return;
+	}
+	printf("onyx-touch: QUPv3 SE4 mapped at %#lx\n", (unsigned long)se);
 	printf("onyx-touch: stage 2 MMIO: SE fw %#x fifo-if %#x status %#x clk %#x hw %#x; gpio irq78=%u cs19=%u\n",
 	    onyx_touch_rd(GENI_FW_REVISION_RO(se)), onyx_touch_rd(GENI_IF_DISABLE_RO(se)),
 	    onyx_touch_rd(GENI_STATUS(se)), onyx_touch_rd(GENI_SER_M_CLK_CFG(se)), onyx_touch_rd(SE_HW_PARAM_0(se)),
