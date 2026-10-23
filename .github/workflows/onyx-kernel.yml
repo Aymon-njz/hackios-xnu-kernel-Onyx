@@ -1,0 +1,51 @@
+name: Build Onyx XNU kernel
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/onyx-kernel.yml'
+      - 'xnu/**'
+      - 'xnu-deps/**'
+      - 'xnu-build.sh'
+      - 'xnu-env.sh'
+
+jobs:
+  kernel:
+    runs-on: ubuntu-24.04
+    env:
+      THEOS: ${{ runner.temp }}/theos
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XNU build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential git curl clang lld python3 perl xz-utils \
+            flex bison m4 autoconf automake libtinfo6
+
+      - name: Install the Linux iOS toolchain and SDK
+        run: CI=1 bash -c "$(curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-theos)"
+
+      - name: Fetch and patch XNU
+        run: |
+          ./xnu/apply.sh
+          ./xnu-deps/setup.sh
+
+      - name: Build the patched ARM64 kernel
+        run: |
+          ./xnu-build.sh -j"$(nproc)" -k || test -f xnu-src/xnu-8796.121.2/BUILD/obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837
+
+      - name: Verify the Onyx native-UFS path is present
+        run: |
+          kernel=xnu-src/xnu-8796.121.2/BUILD/obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837
+          test -s "$kernel"
+          strings -a "$kernel" | grep -F 'the partitions (LUN 0-%u) are read by this kernel' >/dev/null
+          sha256sum "$kernel"
+
+      - name: Publish the Onyx kernel
+        uses: actions/upload-artifact@v4
+        with:
+          name: onyx-xnu-kernel
+          path: xnu-src/xnu-8796.121.2/BUILD/obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837
+          if-no-files-found: error

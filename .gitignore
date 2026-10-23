@@ -2,6 +2,9 @@
 # clones, files of iOS and the hackios-xnu-userland checkout (common/setup.sh), none of which belongs
 # in this repository. Nothing is tracked unless it is named here.
 /*
+!.github/
+!.github/workflows/
+!.github/workflows/onyx-kernel.yml
 !/.gitignore
 !/README.md
 !/LICENSE
