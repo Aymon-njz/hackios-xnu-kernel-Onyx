@@ -22,7 +22,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential git curl clang lld python3 perl xz-utils \
-            flex bison m4 autoconf automake libtinfo6
+            flex bison m4 autoconf automake libtinfo6 uuid-dev
 
       - name: Install the Linux iOS toolchain and SDK
         run: CI=1 bash -c "$(curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-theos)"
