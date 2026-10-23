@@ -14,7 +14,7 @@ jobs:
   kernel:
     runs-on: ubuntu-24.04
     env:
-      THEOS: ${{ runner.temp }}/theos
+      THEOS: ${{ github.workspace }}/.theos
     steps:
       - uses: actions/checkout@v4
 
