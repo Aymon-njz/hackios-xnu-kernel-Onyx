@@ -36,14 +36,64 @@ extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 #define ONYX_PIN_CS              19
 #define ONYX_PIN_IRQ             78
 #define ONYX_NVT_EVENT           0x031400U
-#define ONYX_NVT_REPORT          65
+/* Novatek's 65-byte point packet plus its command byte at index zero. */
+#define ONYX_NVT_REPORT          66
 #define ONYX_NVT_MAX_TOUCHES     10
+#define ONYX_TOUCH_BRIDGE_MAGIC  0x48544354U /* "TCTH" */
+
+/*
+ * The XNU core cannot safely access Onyx's Trusted-Touch-owned QUP engine.
+ * The resident loader runs on the boot CPU while XNU runs on bootcpu=7 and
+ * can use Qualcomm's own UEFI SPI driver.  This cache-line-separated mailbox
+ * is the only data shared between them; XNU never calls into UEFI and never
+ * maps the protected serial engine in bridge mode.
+ */
+struct onyx_touch_bridge {
+	uint32_t magic;
+	uint32_t version;
+	volatile uint32_t sequence;
+	volatile int32_t status;
+	uint32_t report_length;
+	uint32_t reserved[11];
+	uint8_t report[ONYX_NVT_REPORT];
+} __attribute__((aligned(128)));
 
 static vm_offset_t onyx_tlmm;
 static struct {
 	bool down, seen;
 	uint32_t x, y;
 } onyx_contact[ONYX_NVT_MAX_TOUCHES];
+
+static void onyx_touch_report(const uint8_t *report);
+
+static void
+onyx_touch_bridge_run(uint64_t bridge_pa)
+{
+	volatile struct onyx_touch_bridge *bridge;
+	uint32_t sequence = 0;
+	uint8_t report[ONYX_NVT_REPORT];
+
+	bridge = (volatile struct onyx_touch_bridge *)ml_io_map((vm_offset_t)bridge_pa,
+	    sizeof(*bridge));
+	if (bridge == NULL || bridge->magic != ONYX_TOUCH_BRIDGE_MAGIC ||
+	    bridge->version != 1 || bridge->report_length != ONYX_NVT_REPORT) {
+		printf("onyx-touch: loader bridge unavailable at %#llx\n", bridge_pa);
+		return;
+	}
+	printf("onyx-touch: loader SPI bridge ready at %#llx\n", bridge_pa);
+	for (;;) {
+		uint32_t next = bridge->sequence;
+
+		if (next != sequence) {
+			/* The loader publishes sequence last after cleaning the report. */
+			__asm__ volatile ("dmb sy" ::: "memory");
+			memcpy(report, (const void *)(uintptr_t)bridge->report, sizeof(report));
+			sequence = next;
+			onyx_touch_report(report);
+		}
+		delay_for_interval(4000, NSEC_PER_USEC);
+	}
+}
 
 static inline uint32_t
 onyx_touch_rd(vm_offset_t address)
@@ -181,6 +231,7 @@ static void
 onyx_touch_probe_thread(__unused void *parameter, __unused wait_result_t result)
 {
 	int mmio = 0, run = 0;
+	uint64_t bridge_pa = 0;
 	vm_offset_t tlmm, se;
 
 	/* Avoid early platform bring-up: this runs after bsd_init has released its thread. */
@@ -191,6 +242,10 @@ onyx_touch_probe_thread(__unused void *parameter, __unused wait_result_t result)
 	 */
 	printf("onyx-touch: deferred stage 1; NT38771 PID 0x5998, SPI4/SE4 %#x, event buffer %#x\n",
 	    ONYX_SE4_PHYS, 0x031400);
+	if (PE_parse_boot_argn("onyx_touch_shared_pa", &bridge_pa, sizeof(bridge_pa)) && bridge_pa != 0) {
+		onyx_touch_bridge_run(bridge_pa);
+		return;
+	}
 	if (!PE_parse_boot_argn("onyx_touch_mmio", &mmio, sizeof(mmio)) || mmio != 1) {
 		PE_parse_boot_argn("onyx_touch", &run, sizeof(run));
 		if (run == 1) {
