@@ -30,7 +30,7 @@ jobs:
       - name: Fetch and patch XNU
         run: |
           ./xnu/apply.sh
-          ./xnu-deps/setup.sh
+          ./xnu-deps/setup.sh || { cat xnu-deps/exporthdrs.log; exit 1; }
 
       - name: Build the patched ARM64 kernel
         run: |
