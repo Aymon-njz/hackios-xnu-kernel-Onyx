@@ -162,6 +162,9 @@ onyx_touch_say(const char *format, ...)
 #define ONYX_GPI_EVENT_LEN       2048U
 #define ONYX_GPI_RING_LEN        1024U
 #define ONYX_GPI_TRE_BYTES       16U
+#define ONYX_GPI_TX_ONLY         1U
+#define ONYX_GPI_FULL_DUPLEX     3U
+#define ONYX_GPI_EVENT_COMPLETE  0x22U
 
 #define SMMU_SCR0                0x000UL
 #define SMMU_IDR0                0x020UL
@@ -231,8 +234,11 @@ static uint32_t onyx_fifo_depth, onyx_se_source_hz, onyx_se_clock_select;
 struct onyx_gpi_state {
 	vm_offset_t smmu, context, tables, pool;
 	uint32_t match, context_number, old_smr, old_s2cr, old_sctlr;
-	uint32_t page, pages;
+	uint32_t page, pages, tx_wp, rx_wp, event_rp, event_wp;
 	bool smmu_on, event_on, channels_on;
+};
+struct onyx_gpi_tre {
+	uint32_t dword[4];
 };
 static struct onyx_gpi_state onyx_gpi_state;
 static struct {
@@ -514,6 +520,8 @@ onyx_gpi_prepare(void)
 	onyx_touch_wr(event + 12, (uint32_t)(event_iova >> 32));
 	onyx_touch_wr(onyx_gpi + GPI_EV_DOORBELL + 4, (uint32_t)(event_iova >> 32));
 	onyx_touch_wr(onyx_gpi + GPI_EV_DOORBELL, (uint32_t)(event_iova + ONYX_GPI_EVENT_LEN - ONYX_GPI_TRE_BYTES));
+	state->event_rp = 0;
+	state->event_wp = ONYX_GPI_EVENT_LEN - ONYX_GPI_TRE_BYTES;
 	state->event_on = true;
 	for (unsigned ch = 0; ch < 2; ch++) {
 		uint64_t iova = ONYX_GPI_IOVA + (ch == 0 ? ONYX_GPI_TX_OFF : ONYX_GPI_RX_OFF);
@@ -546,6 +554,147 @@ onyx_gpi_prepare(void)
 	}
 	state->channels_on = true;
 	printf("onyx-touch: GPI event/TX/RX rings are active\n");
+	return true;
+}
+
+/*
+ * The GPI rings are producer/consumer queues.  We use a synchronous, single
+ * transfer-at-a-time client here: it is intentionally conservative while the
+ * first native touch driver is being brought up.  The ring cursors still wrap
+ * correctly, so ordinary polling cannot exhaust a queue.
+ */
+static uint32_t
+onyx_gpi_advance(uint32_t cursor, uint32_t amount, uint32_t length)
+{
+	cursor += amount;
+	return cursor >= length ? cursor - length : cursor;
+}
+
+static void
+onyx_gpi_put_tre(struct onyx_gpi_tre *ring, uint32_t *cursor,
+    const struct onyx_gpi_tre *tre)
+{
+	ring[*cursor / ONYX_GPI_TRE_BYTES] = *tre;
+	*cursor = onyx_gpi_advance(*cursor, ONYX_GPI_TRE_BYTES, ONYX_GPI_RING_LEN);
+}
+
+static bool
+onyx_gpi_reap_event(struct onyx_gpi_state *state, uint32_t *events)
+{
+	struct onyx_gpi_tre *event_ring = (struct onyx_gpi_tre *)(state->pool + ONYX_GPI_EVENT_OFF);
+	uint32_t hardware_rp = onyx_touch_rd(onyx_gpi + GPI_EV_CONTEXT + 0x10);
+	uint32_t base = (uint32_t)(ONYX_GPI_IOVA + ONYX_GPI_EVENT_OFF);
+
+	while (hardware_rp != base + state->event_rp) {
+		struct onyx_gpi_tre *event = &event_ring[state->event_rp / ONYX_GPI_TRE_BYTES];
+		uint32_t type = event->dword[3] >> 16 & 0xff;
+
+		if (type == ONYX_GPI_EVENT_COMPLETE) {
+			(*events)++;
+		} else {
+			printf("onyx-touch: GPI event type %#x (%08x %08x %08x %08x)\n", type,
+			    event->dword[0], event->dword[1], event->dword[2], event->dword[3]);
+		}
+		state->event_rp = onyx_gpi_advance(state->event_rp, ONYX_GPI_TRE_BYTES, ONYX_GPI_EVENT_LEN);
+		state->event_wp = onyx_gpi_advance(state->event_wp, ONYX_GPI_TRE_BYTES, ONYX_GPI_EVENT_LEN);
+		/* Returning an event slot to GPI is done through the event doorbell. */
+		onyx_touch_wr(onyx_gpi + GPI_EV_DOORBELL,
+		    (uint32_t)(ONYX_GPI_IOVA + ONYX_GPI_EVENT_OFF + state->event_wp));
+		hardware_rp = onyx_touch_rd(onyx_gpi + GPI_EV_CONTEXT + 0x10);
+	}
+	return *events != 0;
+}
+
+static bool
+onyx_gpi_transfer(const uint8_t *tx, uint8_t *rx, uint32_t length)
+{
+	struct onyx_gpi_state *state = &onyx_gpi_state;
+	struct onyx_gpi_tre config = { { 0 } }, go = { { 0 } }, dma = { { 0 } };
+	struct onyx_gpi_tre *tx_ring, *rx_ring;
+	uint8_t *tx_data, *rx_data;
+	uint32_t divider, events = 0, required = 1;
+	uint64_t deadline;
+
+	if (!state->channels_on || length == 0 || length > 512) {
+		return false;
+	}
+	tx_ring = (struct onyx_gpi_tre *)(state->pool + ONYX_GPI_TX_OFF);
+	rx_ring = (struct onyx_gpi_tre *)(state->pool + ONYX_GPI_RX_OFF);
+	tx_data = (uint8_t *)(state->pool + ONYX_GPI_TX_DATA_OFF);
+	rx_data = (uint8_t *)(state->pool + ONYX_GPI_RX_DATA_OFF);
+	memcpy(tx_data, tx, length);
+	memset(rx_data, 0, length);
+	divider = (onyx_se_source_hz + 999999) / 1000000;
+	if (divider == 0) {
+		divider = 1;
+	}
+	/* CONFIG0: 8-bit words, both packing engines enabled, mode 0, CS0. */
+	config.dword[0] = 3u << 24 | 4u;
+	config.dword[2] = (onyx_se_clock_select & 7u) << 16 | divider;
+	config.dword[3] = 2u << 20 | 2u << 16 | 1u;
+	/* GO, then a TX DMA TRE.  FULL_DUPLEX additionally links the RX channel. */
+	go.dword[0] = rx ? ONYX_GPI_FULL_DUPLEX : ONYX_GPI_TX_ONLY;
+	go.dword[2] = rx ? length : 0;
+	go.dword[3] = 2u << 20 | (rx ? 1u << 11 : 0) | 1u;
+	dma.dword[0] = (uint32_t)(ONYX_GPI_IOVA + ONYX_GPI_TX_DATA_OFF);
+	dma.dword[2] = length;
+	dma.dword[3] = 1u << 20 | 1u << 9;
+	if (rx) {
+		struct onyx_gpi_tre rxdma = { { 0 } };
+		rxdma.dword[0] = (uint32_t)(ONYX_GPI_IOVA + ONYX_GPI_RX_DATA_OFF);
+		rxdma.dword[2] = length;
+		rxdma.dword[3] = 1u << 20;
+		onyx_gpi_put_tre(rx_ring, &state->rx_wp, &rxdma);
+	}
+	onyx_gpi_put_tre(tx_ring, &state->tx_wp, &config);
+	onyx_gpi_put_tre(tx_ring, &state->tx_wp, &go);
+	onyx_gpi_put_tre(tx_ring, &state->tx_wp, &dma);
+	onyx_touch_clean(state->pool + ONYX_GPI_TX_OFF, ONYX_GPI_RING_LEN);
+	if (rx) {
+		onyx_touch_clean(state->pool + ONYX_GPI_RX_OFF, ONYX_GPI_RING_LEN);
+	}
+	onyx_touch_clean((vm_offset_t)tx_data, length);
+	__asm__ volatile ("dsb sy" ::: "memory");
+	if (rx) {
+		onyx_touch_wr(onyx_gpi + GPI_CH_DOORBELL(1),
+		    (uint32_t)(ONYX_GPI_IOVA + ONYX_GPI_RX_OFF + state->rx_wp));
+	}
+	onyx_touch_wr(onyx_gpi + GPI_CH_DOORBELL(0),
+	    (uint32_t)(ONYX_GPI_IOVA + ONYX_GPI_TX_OFF + state->tx_wp));
+	clock_interval_to_deadline(200, NSEC_PER_MSEC, &deadline);
+	while (mach_absolute_time() < deadline) {
+		if (onyx_gpi_reap_event(state, &events) && events >= required) {
+			if (rx) {
+				onyx_touch_clean((vm_offset_t)rx_data, length);
+				memcpy(rx, rx_data, length);
+			}
+			return true;
+		}
+		delay_for_interval(100, NSEC_PER_USEC);
+	}
+	printf("onyx-touch: GPI SPI transfer timed out (events %u/%u, tx-rp %#x rx-rp %#x err %#x)\n",
+	    events, required, onyx_touch_rd(onyx_gpi + GPI_CH_CONTEXT(0) + 0x10),
+	    onyx_touch_rd(onyx_gpi + GPI_CH_CONTEXT(1) + 0x10),
+	    onyx_touch_rd(onyx_gpi + GPI_ERROR_LOG));
+	return false;
+}
+
+static bool
+onyx_nvt_gpi_read(uint32_t address, uint8_t *data, uint32_t length)
+{
+	uint8_t page[3] = { 0xff, (uint8_t)(address >> 15), (uint8_t)(address >> 7) };
+	uint8_t tx[ONYX_NVT_REPORT + 1] = { 0 }, rx[ONYX_NVT_REPORT + 1] = { 0 };
+
+	if (length > ONYX_NVT_REPORT) {
+		return false;
+	}
+	tx[0] = (uint8_t)(address & 0x7f);
+	if (!onyx_gpi_transfer(page, NULL, sizeof(page)) ||
+	    !onyx_gpi_transfer(tx, rx, length + 1)) {
+		return false;
+	}
+	data[0] = tx[0];
+	memcpy(data + 1, rx + 2, length - 1);
 	return true;
 }
 
@@ -962,7 +1111,25 @@ onyx_touch_gpi_run(void)
 	onyx_gpio_configure(ONYX_PIN_CS, ONYX_PIN_FUNCTION_SPI, false);
 	onyx_gpio_configure(ONYX_PIN_IRQ, 0, false);
 	printf("onyx-touch: starting native GPI transport for NT38771\n");
-	(void)onyx_gpi_prepare();
+	if (!onyx_gpi_prepare()) {
+		return;
+	}
+	for (unsigned reads = 0;;) {
+		uint8_t report[ONYX_NVT_REPORT];
+		bool asserted = !onyx_gpio_get(ONYX_PIN_IRQ);
+
+		/* Poll as a safety net: the panel's IRQ is level-triggered. */
+		if (asserted || reads == 0) {
+			if (onyx_nvt_gpi_read(ONYX_NVT_EVENT, report, sizeof(report))) {
+				if (reads++ == 0) {
+					printf("onyx-touch: first native report irq=%u data %02x %02x %02x %02x %02x %02x\n",
+					    asserted, report[1], report[2], report[3], report[4], report[5], report[6]);
+				}
+				onyx_touch_report(report);
+			}
+		}
+		delay_for_interval(8000, NSEC_PER_USEC);
+	}
 }
 
 static void
