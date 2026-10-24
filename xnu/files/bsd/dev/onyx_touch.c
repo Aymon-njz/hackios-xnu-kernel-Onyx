@@ -12,12 +12,15 @@
 #include <kern/thread.h>
 #include <libkern/libkern.h>
 #include <mach/mach_types.h>
+#include <mach/vm_param.h>
 #include <pexpert/pexpert.h>
 #include <sys/redwood_input.h>
 #include <sys/systm.h>
+#include <vm/vm_kern.h>
 
 extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 extern void loader_log_putc(char c);
+extern uint64_t kvtophys(vm_offset_t va);
 
 /* Keep every Onyx touch line in the resident loader log as well as on screen. */
 static int
@@ -135,6 +138,30 @@ onyx_touch_say(const char *format, ...)
 #define GPI_GPII_IRQ             0x13118UL
 #define GPI_ERROR_LOG            0x13200UL
 #define GPI_CH_SCRATCH(k, n)     (0x10060UL + 0x80UL * (k) + 4UL * (n))
+#define GPI_CH_QOS(k)            (0x1005cUL + 0x80UL * (k))
+
+#define GPI_CONTEXT_STATE(v)     (((v) >> 20) & 0xf)
+#define GPI_CONTEXT_CONFIG(size, event, direction, protocol) \
+	((uint32_t)(size) << 24 | (uint32_t)(event) << 14 | (uint32_t)(direction) << 3 | (protocol))
+#define GPI_EVENT_CONFIG(size)   ((uint32_t)(size) << 24 | 1u << 16 | 2u)
+#define GPI_CH_CMD_VALUE(op, ch) ((uint32_t)(op) << 24 | (ch))
+#define GPI_EV_CMD_VALUE(op)     ((uint32_t)(op) << 24)
+#define GPI_CH_ALLOCATE          0u
+#define GPI_CH_START             1u
+#define GPI_CH_DEALLOCATE        10u
+#define GPI_EV_ALLOCATE          0u
+#define GPI_EV_DEALLOCATE        10u
+
+#define ONYX_GPI_IOVA            0x001d0000ULL
+#define ONYX_GPI_POOL_BYTES      0x00010000U
+#define ONYX_GPI_EVENT_OFF       0x0000U
+#define ONYX_GPI_TX_OFF          0x1000U
+#define ONYX_GPI_RX_OFF          0x2000U
+#define ONYX_GPI_TX_DATA_OFF     0x3000U
+#define ONYX_GPI_RX_DATA_OFF     0x4000U
+#define ONYX_GPI_EVENT_LEN       2048U
+#define ONYX_GPI_RING_LEN        1024U
+#define ONYX_GPI_TRE_BYTES       16U
 
 #define SMMU_SCR0                0x000UL
 #define SMMU_IDR0                0x020UL
@@ -148,6 +175,22 @@ onyx_touch_say(const char *format, ...)
 #define SMMU_CB_FSR              0x058UL
 #define SMMU_CB_FAR              0x060UL
 #define SMMU_CB_FSYNR0           0x068UL
+#define SMMU_CBAR(n)             (4UL * (n))
+#define SMMU_CBA2R(n)            (0x800UL + 4UL * (n))
+#define SMMU_CB_TCR2             0x010UL
+#define SMMU_CB_TTBR1            0x028UL
+#define SMMU_CB_TCR              0x030UL
+#define SMMU_CB_MAIR0            0x038UL
+#define SMMU_CB_MAIR1            0x03cUL
+#define SMMU_CB_TLBIASID         0x610UL
+#define SMMU_CB_TLBSYNC          0x7f0UL
+#define SMMU_CB_TLBSTATUS        0x7f4UL
+#define SMMU_SCTLR_ON            (1u << 0 | 1u << 1 | 1u << 2 | 1u << 5 | 1u << 8 | 1u << 12)
+#define SMMU_TCR_39_BITS         (25u | 1u << 8 | 1u << 10 | 3u << 12 | 1u << 23)
+#define SMMU_TCR2_VALUE          (1u | 1u << 4 | 7u << 15)
+#define SMMU_MAIR0_VALUE         0xf404ff44U
+#define SMMU_FSR_ALL             0xc00001feU
+#define SMMU_PTE                 (3ULL | 1ULL << 6 | 2ULL << 8 | 1ULL << 10 | 1ULL << 11)
 
 #define M_CMD_DONE               (1u << 0)
 #define M_CMD_CANCEL             (1u << 4)
@@ -185,6 +228,13 @@ struct onyx_touch_bridge {
 
 static vm_offset_t onyx_tlmm, onyx_gcc, onyx_se, onyx_gpi;
 static uint32_t onyx_fifo_depth, onyx_se_source_hz, onyx_se_clock_select;
+struct onyx_gpi_state {
+	vm_offset_t smmu, context, tables, pool;
+	uint32_t match, context_number, old_smr, old_s2cr, old_sctlr;
+	uint32_t page, pages;
+	bool smmu_on, event_on, channels_on;
+};
+static struct onyx_gpi_state onyx_gpi_state;
 static struct {
 	bool down, seen;
 	uint32_t x, y;
@@ -232,6 +282,15 @@ static inline void
 onyx_touch_wr(vm_offset_t address, uint32_t value)
 {
 	*(volatile uint32_t *)address = value;
+}
+
+static void
+onyx_touch_clean(vm_offset_t start, vm_size_t length)
+{
+	for (vm_offset_t line = start & ~63ULL; line < start + length; line += 64) {
+		__asm__ volatile ("dc civac, %0" : : "r" (line));
+	}
+	__asm__ volatile ("dsb sy" ::: "memory");
 }
 
 /*
@@ -301,6 +360,193 @@ onyx_smmu_probe(void)
 			}
 		}
 	}
+}
+
+/*
+ * Give GPI stream 0xb6 a small, explicitly bounded IOVA view.  Android
+ * reserves every address except 0x00100000..0x001fffff for this device; the
+ * ring/data pool is deliberately placed inside that aperture.  Nothing is
+ * submitted to SE4 here: this only prepares the translation required by the
+ * vendor GPI channel allocator.
+ */
+static bool
+onyx_smmu_prepare_gpi(void)
+{
+	struct onyx_gpi_state *state = &onyx_gpi_state;
+	bool used[256] = { false };
+	uint32_t idr0, idr1, matches, contexts;
+	uint64_t *root, *second, *third, root_pa;
+
+	state->smmu = ml_io_map(ONYX_APPS_SMMU_PHYS, 0x2000);
+	if (!state->smmu) {
+		printf("onyx-touch: cannot map apps SMMU for GPI\n");
+		return false;
+	}
+	idr0 = onyx_touch_rd(state->smmu + SMMU_IDR0);
+	idr1 = onyx_touch_rd(state->smmu + SMMU_IDR1);
+	if (onyx_touch_rd(state->smmu + SMMU_SCR0) & (1u << 3)) {
+		printf("onyx-touch: apps SMMU uses 16-bit stream IDs; GPI setup is not implemented\n");
+		return false;
+	}
+	matches = idr0 & 0xff;
+	contexts = idr1 & 0xff;
+	state->page = idr1 >> 31 ? 0x10000 : 0x1000;
+	state->pages = 2u << (idr1 >> 28 & 7);
+	state->match = UINT32_MAX;
+	for (uint32_t n = 0; n < matches && SMMU_SMR(n) < 0xc00; n++) {
+		uint32_t smr = onyx_touch_rd(state->smmu + SMMU_SMR(n));
+		uint32_t s2cr = onyx_touch_rd(state->smmu + SMMU_S2CR(n));
+
+		if (smr >> 31) {
+			used[s2cr & 0xff] = true;
+			if ((((smr & 0x7fff) ^ ONYX_GPI_STREAM) & ~(smr >> 16 & 0x7fff)) == 0) {
+				printf("onyx-touch: apps SMMU already owns GPI stream %#x (match %u)\n", ONYX_GPI_STREAM, n);
+				return false;
+			}
+		} else if (state->match == UINT32_MAX) {
+			state->match = n;
+			state->old_smr = smr;
+			state->old_s2cr = s2cr;
+		}
+	}
+	for (state->context_number = 0; state->context_number < contexts && used[state->context_number]; state->context_number++) {
+	}
+	if (state->match == UINT32_MAX || state->context_number >= contexts) {
+		printf("onyx-touch: no free apps SMMU match/context for GPI\n");
+		return false;
+	}
+	state->context = ml_io_map(ONYX_APPS_SMMU_PHYS +
+	    (vm_offset_t)(state->pages + state->context_number) * state->page, 0x1000);
+	if (!state->context || (state->old_sctlr = onyx_touch_rd(state->context + SMMU_CB_SCTLR)) & 1) {
+		printf("onyx-touch: apps SMMU context %u is unavailable\n", state->context_number);
+		return false;
+	}
+	if (kmem_alloc(kernel_map, &state->tables, 3 * 4096, KMA_KOBJECT | KMA_ZERO | KMA_DATA,
+	    VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS ||
+	    kmem_alloc_contig(kernel_map, &state->pool, ONYX_GPI_POOL_BYTES, PAGE_MASK, 0, 0,
+	    KMA_KOBJECT | KMA_ZERO | KMA_DATA, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
+		printf("onyx-touch: cannot allocate GPI SMMU tables/rings\n");
+		return false;
+	}
+	root = (uint64_t *)state->tables;
+	second = (uint64_t *)(state->tables + 4096);
+	third = (uint64_t *)(state->tables + 8192);
+	root[ONYX_GPI_IOVA >> 30 & 0x1ff] = kvtophys((vm_offset_t)second) | 3;
+	second[ONYX_GPI_IOVA >> 21 & 0x1ff] = kvtophys((vm_offset_t)third) | 3;
+	for (uint32_t offset = 0; offset < ONYX_GPI_POOL_BYTES; offset += 4096) {
+		third[((ONYX_GPI_IOVA + offset) >> 12) & 0x1ff] = kvtophys(state->pool + offset) | SMMU_PTE;
+	}
+	onyx_touch_clean(state->tables, 3 * 4096);
+	onyx_touch_clean(state->pool, ONYX_GPI_POOL_BYTES);
+	root_pa = kvtophys(state->tables) | (uint64_t)state->context_number << 48;
+	onyx_touch_wr(state->context + SMMU_CB_SCTLR, 0);
+	onyx_touch_wr(state->smmu + SMMU_CBA2R(state->context_number), 1);
+	onyx_touch_wr(state->smmu + SMMU_CBAR(state->context_number), 1u << 16 | 3u << 8 | 0xfu << 12);
+	onyx_touch_wr(state->context + SMMU_CB_TCR2, SMMU_TCR2_VALUE);
+	onyx_touch_wr(state->context + SMMU_CB_TCR, SMMU_TCR_39_BITS);
+	onyx_touch_wr(state->context + SMMU_CB_TTBR0, (uint32_t)root_pa);
+	onyx_touch_wr(state->context + SMMU_CB_TTBR0 + 4, (uint32_t)(root_pa >> 32));
+	onyx_touch_wr(state->context + SMMU_CB_TTBR1, 0);
+	onyx_touch_wr(state->context + SMMU_CB_TTBR1 + 4, 0);
+	onyx_touch_wr(state->context + SMMU_CB_MAIR0, SMMU_MAIR0_VALUE);
+	onyx_touch_wr(state->context + SMMU_CB_MAIR1, 0);
+	onyx_touch_wr(state->context + SMMU_CB_FSR, SMMU_FSR_ALL);
+	onyx_touch_wr(state->context + SMMU_CB_TLBIASID, state->context_number);
+	onyx_touch_wr(state->context + SMMU_CB_TLBSYNC, 1);
+	for (unsigned i = 0; i < 100 && (onyx_touch_rd(state->context + SMMU_CB_TLBSTATUS) & 1); i++) {
+		delay_for_interval(1, NSEC_PER_MSEC);
+	}
+	if (onyx_touch_rd(state->context + SMMU_CB_TLBSTATUS) & 1) {
+		printf("onyx-touch: apps SMMU TLB sync timed out\n");
+		return false;
+	}
+	onyx_touch_wr(state->context + SMMU_CB_SCTLR, SMMU_SCTLR_ON);
+	onyx_touch_wr(state->smmu + SMMU_S2CR(state->match), state->context_number);
+	onyx_touch_wr(state->smmu + SMMU_SMR(state->match), 1u << 31 | ONYX_GPI_STREAM);
+	if (onyx_touch_rd(state->smmu + SMMU_SMR(state->match)) != (1u << 31 | ONYX_GPI_STREAM)) {
+		printf("onyx-touch: apps SMMU refused GPI stream mapping\n");
+		return false;
+	}
+	state->smmu_on = true;
+	printf("onyx-touch: GPI stream %#x mapped at IOVA %#llx (match %u context %u)\n",
+	    ONYX_GPI_STREAM, ONYX_GPI_IOVA, state->match, state->context_number);
+	return true;
+}
+
+static bool
+onyx_gpi_wait(vm_offset_t context, uint32_t expected)
+{
+	for (unsigned i = 0; i < 2000; i++) {
+		if (GPI_CONTEXT_STATE(onyx_touch_rd(context)) == expected) {
+			return true;
+		}
+		delay_for_interval(100, NSEC_PER_USEC);
+	}
+	return false;
+}
+
+static bool
+onyx_gpi_prepare(void)
+{
+	struct onyx_gpi_state *state = &onyx_gpi_state;
+	vm_offset_t event, channel;
+	uint64_t event_iova = ONYX_GPI_IOVA + ONYX_GPI_EVENT_OFF;
+
+	if (!onyx_smmu_prepare_gpi()) {
+		return false;
+	}
+	onyx_gpi = ml_io_map(ONYX_GPI1_PHYS, ONYX_GPI_SIZE);
+	if (!onyx_gpi) {
+		printf("onyx-touch: cannot map QUP1 GPI for DMA\n");
+		return false;
+	}
+	/* The vendor driver allocates first, then programs each context. */
+	event = onyx_gpi + GPI_EV_CONTEXT;
+	onyx_touch_wr(onyx_gpi + GPI_EV_CMD, GPI_EV_CMD_VALUE(GPI_EV_ALLOCATE));
+	if (!onyx_gpi_wait(event, 1)) {
+		printf("onyx-touch: GPI event-ring allocation timed out (ctx %#x err %#x)\n",
+		    onyx_touch_rd(event), onyx_touch_rd(onyx_gpi + GPI_ERROR_LOG));
+		return false;
+	}
+	onyx_touch_wr(event, GPI_EVENT_CONFIG(ONYX_GPI_TRE_BYTES));
+	onyx_touch_wr(event + 4, ONYX_GPI_EVENT_LEN);
+	onyx_touch_wr(event + 8, (uint32_t)event_iova);
+	onyx_touch_wr(event + 12, (uint32_t)(event_iova >> 32));
+	onyx_touch_wr(onyx_gpi + GPI_EV_DOORBELL + 4, (uint32_t)(event_iova >> 32));
+	onyx_touch_wr(onyx_gpi + GPI_EV_DOORBELL, (uint32_t)(event_iova + ONYX_GPI_EVENT_LEN - ONYX_GPI_TRE_BYTES));
+	state->event_on = true;
+	for (unsigned ch = 0; ch < 2; ch++) {
+		uint64_t iova = ONYX_GPI_IOVA + (ch == 0 ? ONYX_GPI_TX_OFF : ONYX_GPI_RX_OFF);
+		uint32_t direction = ch == 0 ? 1 : 0;
+
+		channel = onyx_gpi + GPI_CH_CONTEXT(ch);
+		onyx_touch_wr(onyx_gpi + GPI_CH_CMD, GPI_CH_CMD_VALUE(GPI_CH_ALLOCATE, ch));
+		if (!onyx_gpi_wait(channel, 1)) {
+			printf("onyx-touch: GPI channel %u allocation timed out (ctx %#x err %#x)\n",
+			    ch, onyx_touch_rd(channel), onyx_touch_rd(onyx_gpi + GPI_ERROR_LOG));
+			return false;
+		}
+		onyx_touch_wr(channel, GPI_CONTEXT_CONFIG(ONYX_GPI_TRE_BYTES, 0, direction, 2));
+		onyx_touch_wr(channel + 4, ONYX_GPI_RING_LEN);
+		onyx_touch_wr(channel + 8, (uint32_t)iova);
+		onyx_touch_wr(channel + 12, (uint32_t)(iova >> 32));
+		onyx_touch_wr(onyx_gpi + GPI_CH_DOORBELL(ch) + 4, (uint32_t)(iova >> 32));
+		onyx_touch_wr(onyx_gpi + GPI_CH_SCRATCH(ch, 0), (!ch << 16) | 1u << 4 | 4u);
+		onyx_touch_wr(onyx_gpi + GPI_CH_SCRATCH(ch, 1), 0);
+		onyx_touch_wr(onyx_gpi + GPI_CH_SCRATCH(ch, 2), 0);
+		onyx_touch_wr(onyx_gpi + GPI_CH_SCRATCH(ch, 3), 0);
+		onyx_touch_wr(onyx_gpi + GPI_CH_QOS(ch), 1);
+		__asm__ volatile ("dsb sy" ::: "memory");
+		onyx_touch_wr(onyx_gpi + GPI_CH_CMD, GPI_CH_CMD_VALUE(GPI_CH_START, ch));
+		if (!onyx_gpi_wait(channel, 2)) {
+			printf("onyx-touch: GPI channel %u start timed out (ctx %#x err %#x)\n",
+			    ch, onyx_touch_rd(channel), onyx_touch_rd(onyx_gpi + GPI_ERROR_LOG));
+			return false;
+		}
+	}
+	state->channels_on = true;
+	printf("onyx-touch: GPI event/TX/RX rings are active\n");
+	return true;
 }
 
 static void
@@ -695,10 +941,34 @@ onyx_touch_run(void)
 	}
 }
 
+/* First live stage of the native path: claim the GPI transport before queueing TREs. */
+static void
+onyx_touch_gpi_run(void)
+{
+	onyx_tlmm = ml_io_map(ONYX_TLMM_PHYS, ONYX_TLMM_SIZE);
+	onyx_gcc = ml_io_map(ONYX_GCC_PHYS, ONYX_GCC_SIZE);
+	if (!onyx_tlmm || !onyx_gcc || !onyx_clocks_on()) {
+		printf("onyx-touch: cannot prepare TLMM/GCC for GPI\n");
+		return;
+	}
+	onyx_se = ml_io_map(ONYX_SE4_PHYS, ONYX_SE_SIZE);
+	if (!onyx_se || !(onyx_touch_rd(GENI_IF_DISABLE_RO(onyx_se)) & 1)) {
+		printf("onyx-touch: SE4 is not in the expected GPI-only mode\n");
+		return;
+	}
+	onyx_gpio_configure(ONYX_PIN_MISO, ONYX_PIN_FUNCTION_SPI, false);
+	onyx_gpio_configure(ONYX_PIN_MOSI, ONYX_PIN_FUNCTION_SPI, false);
+	onyx_gpio_configure(ONYX_PIN_CLK, ONYX_PIN_FUNCTION_SPI, false);
+	onyx_gpio_configure(ONYX_PIN_CS, ONYX_PIN_FUNCTION_SPI, false);
+	onyx_gpio_configure(ONYX_PIN_IRQ, 0, false);
+	printf("onyx-touch: starting native GPI transport for NT38771\n");
+	(void)onyx_gpi_prepare();
+}
+
 static void
 onyx_touch_probe_thread(__unused void *parameter, __unused wait_result_t result)
 {
-	int mmio = 0, run = 0, geni = 0, gpi_probe = 0;
+	int mmio = 0, run = 0, geni = 0, gpi_probe = 0, gpi = 0;
 	uint64_t bridge_pa = 0;
 	vm_offset_t tlmm, se;
 
@@ -716,6 +986,10 @@ onyx_touch_probe_thread(__unused void *parameter, __unused wait_result_t result)
 	}
 	if (PE_parse_boot_argn("onyx_touch_gpi_probe", &gpi_probe, sizeof(gpi_probe)) && gpi_probe == 1) {
 		onyx_gpi_probe();
+		return;
+	}
+	if (PE_parse_boot_argn("onyx_touch_gpi", &gpi, sizeof(gpi)) && gpi == 1) {
+		onyx_touch_gpi_run();
 		return;
 	}
 	if (PE_parse_boot_argn("onyx_touch_geni", &geni, sizeof(geni)) && geni == 1) {
