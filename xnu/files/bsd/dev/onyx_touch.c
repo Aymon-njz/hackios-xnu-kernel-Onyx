@@ -17,6 +17,31 @@
 #include <sys/systm.h>
 
 extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
+extern void loader_log_putc(char c);
+
+/* Keep every Onyx touch line in the resident loader log as well as on screen. */
+static int
+onyx_touch_say(const char *format, ...) __printflike(1, 2);
+
+static int
+onyx_touch_say(const char *format, ...)
+{
+	char line[512];
+	va_list list;
+	int length;
+
+	va_start(list, format);
+	length = vsnprintf(line, sizeof(line), format, list);
+	va_end(list);
+	for (const char *c = line; *c != 0; c++) {
+		loader_log_putc(*c);
+	}
+	printf("%s", line);
+	return length;
+}
+
+/* All diagnostics below must survive a loader-return test. */
+#define printf onyx_touch_say
 
 #define ONYX_TLMM_PHYS           0x0f000000UL
 #define ONYX_TLMM_SIZE           0x100000UL
