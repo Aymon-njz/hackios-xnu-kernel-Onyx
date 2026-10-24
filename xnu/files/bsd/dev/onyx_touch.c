@@ -778,10 +778,77 @@ onyx_gpio_configure(unsigned pin, unsigned function, bool output)
 	onyx_touch_wr(GPIO_CFG(onyx_tlmm, pin), function << 2 | 2u << 6 | (output ? 1u << 9 : 0));
 }
 
+static inline void
+onyx_gpio_set(unsigned pin, bool high)
+{
+	/* GPIO_IO bit 1 is the output latch; set it before switching to output. */
+	onyx_touch_wr(GPIO_IO(onyx_tlmm, pin), high ? 2u : 0u);
+}
+
+static void
+onyx_gpio_output(unsigned pin, bool high)
+{
+	onyx_gpio_set(pin, high);
+	onyx_gpio_configure(pin, 0, true);
+}
+
 static inline bool
 onyx_gpio_get(unsigned pin)
 {
 	return onyx_touch_rd(GPIO_IO(onyx_tlmm, pin)) & 1;
+}
+
+/* A deliberately slow mode-0 SPI fallback that avoids SE4/GPI completely. */
+static void
+onyx_bitbang_init(void)
+{
+	onyx_gpio_output(ONYX_PIN_CS, true);
+	onyx_gpio_output(ONYX_PIN_CLK, false);
+	onyx_gpio_output(ONYX_PIN_MOSI, false);
+	onyx_gpio_configure(ONYX_PIN_MISO, 0, false);
+}
+
+static bool
+onyx_bitbang_transfer(const uint8_t *tx, uint8_t *rx, uint32_t length)
+{
+	onyx_gpio_set(ONYX_PIN_CS, false);
+	delay_for_interval(1, NSEC_PER_USEC);
+	for (uint32_t i = 0; i < length; i++) {
+		uint8_t out = tx ? tx[i] : 0, in = 0;
+
+		for (int bit = 7; bit >= 0; bit--) {
+			onyx_gpio_set(ONYX_PIN_MOSI, out >> bit & 1);
+			delay_for_interval(1, NSEC_PER_USEC);
+			onyx_gpio_set(ONYX_PIN_CLK, true);
+			delay_for_interval(1, NSEC_PER_USEC);
+			in = (uint8_t)(in << 1 | onyx_gpio_get(ONYX_PIN_MISO));
+			onyx_gpio_set(ONYX_PIN_CLK, false);
+			delay_for_interval(1, NSEC_PER_USEC);
+		}
+		if (rx) {
+			rx[i] = in;
+		}
+	}
+	onyx_gpio_set(ONYX_PIN_CS, true);
+	delay_for_interval(2, NSEC_PER_USEC);
+	return true;
+}
+
+static bool
+onyx_nvt_bitbang_read(uint32_t address, uint8_t *data, uint32_t length)
+{
+	uint8_t page[3] = { 0xff, (uint8_t)(address >> 15), (uint8_t)(address >> 7) };
+	uint8_t tx[ONYX_NVT_REPORT + 1] = { 0 }, rx[ONYX_NVT_REPORT + 1] = { 0 };
+
+	if (length > ONYX_NVT_REPORT) {
+		return false;
+	}
+	tx[0] = (uint8_t)(address & 0x7f);
+	onyx_bitbang_transfer(page, NULL, sizeof(page));
+	onyx_bitbang_transfer(tx, rx, length + 1);
+	data[0] = tx[0];
+	memcpy(data + 1, rx + 2, length - 1);
+	return true;
 }
 
 static uint32_t
@@ -1115,6 +1182,36 @@ onyx_touch_run(void)
 	}
 }
 
+/* Direct GPIO fallback for the GPI-only serial engine. */
+static void
+onyx_touch_bitbang_run(void)
+{
+	onyx_tlmm = ml_io_map(ONYX_TLMM_PHYS, ONYX_TLMM_SIZE);
+	if (!onyx_tlmm) {
+		printf("onyx-touch: cannot map TLMM for direct SPI\n");
+		return;
+	}
+	onyx_bitbang_init();
+	onyx_gpio_configure(ONYX_PIN_IRQ, 0, false);
+	printf("onyx-touch: NT38771 direct GPIO SPI enabled (pins 16..19)\n");
+	for (unsigned reads = 0, idle = 0;;) {
+		uint8_t report[ONYX_NVT_REPORT];
+		bool asserted = !onyx_gpio_get(ONYX_PIN_IRQ);
+
+		if (asserted || reads == 0 || ++idle >= 10) {
+			idle = 0;
+			if (onyx_nvt_bitbang_read(ONYX_NVT_EVENT, report, sizeof(report))) {
+				if (reads++ == 0) {
+					printf("onyx-touch: first GPIO report irq=%u data %02x %02x %02x %02x %02x %02x\n",
+					    asserted, report[1], report[2], report[3], report[4], report[5], report[6]);
+				}
+				onyx_touch_report(report);
+			}
+		}
+		delay_for_interval(8000, NSEC_PER_USEC);
+	}
+}
+
 /* First live stage of the native path: claim the GPI transport before queueing TREs. */
 static void
 onyx_touch_gpi_run(void)
@@ -1166,7 +1263,7 @@ onyx_touch_gpi_run(void)
 static void
 onyx_touch_probe_thread(__unused void *parameter, __unused wait_result_t result)
 {
-	int mmio = 0, run = 0, geni = 0, gpi_probe = 0, gpi = 0;
+	int mmio = 0, run = 0, geni = 0, gpi_probe = 0, gpi = 0, bitbang = 0;
 	uint64_t bridge_pa = 0;
 	vm_offset_t tlmm, se;
 
@@ -1188,6 +1285,10 @@ onyx_touch_probe_thread(__unused void *parameter, __unused wait_result_t result)
 	}
 	if (PE_parse_boot_argn("onyx_touch_gpi", &gpi, sizeof(gpi)) && gpi == 1) {
 		onyx_touch_gpi_run();
+		return;
+	}
+	if (PE_parse_boot_argn("onyx_touch_bitbang", &bitbang, sizeof(bitbang)) && bitbang == 1) {
+		onyx_touch_bitbang_run();
 		return;
 	}
 	if (PE_parse_boot_argn("onyx_touch_geni", &geni, sizeof(geni)) && geni == 1) {
