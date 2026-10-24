@@ -1201,9 +1201,10 @@ onyx_touch_bitbang_run(void)
 		if (asserted || reads == 0 || ++idle >= 10) {
 			idle = 0;
 			if (onyx_nvt_bitbang_read(ONYX_NVT_EVENT, report, sizeof(report))) {
-				if (reads++ == 0) {
-					printf("onyx-touch: first GPIO report irq=%u data %02x %02x %02x %02x %02x %02x\n",
-					    asserted, report[1], report[2], report[3], report[4], report[5], report[6]);
+				/* Keep a compact sample in the persistent log's retained tail. */
+				if (reads++ % 8 == 0) {
+					printf("onyx-touch: GPIO sample irq=%u data %02x %02x %02x %02x %02x %02x %02x %02x\n",
+					    asserted, report[1], report[2], report[3], report[4], report[5], report[6], report[7], report[8]);
 				}
 				onyx_touch_report(report);
 			}
