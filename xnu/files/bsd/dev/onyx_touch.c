@@ -433,8 +433,9 @@ onyx_touch_report(const uint8_t *report)
 		if (id >= ONYX_NVT_MAX_TOUCHES || (event != 1 && event != 2)) {
 			continue;
 		}
-		x = ((uint32_t)p[1] << 4) | (p[2] >> 4);
-		y = ((uint32_t)(p[2] & 0xf) << 8) | p[3];
+		/* NT36xxx SPI point data: X high, Y high, then both low nibbles. */
+		x = ((uint32_t)p[1] << 4) | (p[3] >> 4);
+		y = ((uint32_t)p[2] << 4) | (p[3] & 0xf);
 		x = x >= 1280 ? 65535 : x * 65535 / 1280;
 		y = y >= 2772 ? 65535 : y * 65535 / 2772;
 		onyx_contact[id].seen = true;
@@ -460,6 +461,7 @@ onyx_touch_run(void)
 {
 	const char *problem;
 	uint8_t report[ONYX_NVT_REPORT];
+	unsigned idle = 0, reads = 0;
 
 	onyx_tlmm = ml_io_map(ONYX_TLMM_PHYS, ONYX_TLMM_SIZE);
 	onyx_gcc = ml_io_map(ONYX_GCC_PHYS, ONYX_GCC_SIZE);
@@ -491,8 +493,18 @@ onyx_touch_run(void)
 	onyx_gpio_configure(ONYX_PIN_IRQ, 0, false);
 	printf("onyx-touch: NT38771 GENI polling enabled at 1 MHz; irq=%u\n", onyx_gpio_get(ONYX_PIN_IRQ));
 	for (;;) {
-		if (!onyx_gpio_get(ONYX_PIN_IRQ) && onyx_nvt_read(ONYX_NVT_EVENT, report, sizeof(report))) {
-			onyx_touch_report(report);
+		bool asserted = !onyx_gpio_get(ONYX_PIN_IRQ);
+
+		/* Read immediately, on IRQ, and every 80 ms in case the edge/level is missed. */
+		if (asserted || reads == 0 || ++idle >= 10) {
+			idle = 0;
+			if (onyx_nvt_read(ONYX_NVT_EVENT, report, sizeof(report))) {
+				if (reads++ == 0) {
+					printf("onyx-touch: first report irq=%u data %02x %02x %02x %02x %02x %02x %02x %02x\n",
+					    asserted, report[1], report[2], report[3], report[4], report[5], report[6], report[7], report[8]);
+				}
+				onyx_touch_report(report);
+			}
 		}
 		delay_for_interval(8000, NSEC_PER_USEC);
 	}
