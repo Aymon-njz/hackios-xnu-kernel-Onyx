@@ -265,8 +265,14 @@ onyx_geni_init(uint32_t hz)
 	if ((onyx_touch_rd(GENI_FW_REVISION_RO(onyx_se)) >> 8 & 0xff) != 1) {
 		return "SE4 has no SPI firmware";
 	}
+	/*
+	 * GENI_IF_DISABLE_RO advertises the firmware's preferred interface.  The
+	 * Qualcomm SPI driver still falls back to FIFO mode when GPI DMA is not
+	 * available, even when this bit is set.  XNU has no GPI stack yet, so do
+	 * the same instead of abandoning an otherwise live SPI engine.
+	 */
 	if (onyx_touch_rd(GENI_IF_DISABLE_RO(onyx_se)) & 1) {
-		return "SE4 FIFO interface is disabled";
+		printf("onyx-touch: SE4 advertises GPI-only; forcing the supported FIFO fallback\n");
 	}
 	onyx_fifo_depth = onyx_touch_rd(SE_HW_PARAM_0(onyx_se)) >> 16 & 0x3f;
 	if (onyx_fifo_depth < 4) {
