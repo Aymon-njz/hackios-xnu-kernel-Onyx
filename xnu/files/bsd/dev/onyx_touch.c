@@ -151,6 +151,7 @@ static struct {
 } onyx_contact[ONYX_NVT_MAX_TOUCHES];
 
 static void onyx_touch_report(const uint8_t *report);
+static bool onyx_clocks_on(void);
 
 static void
 onyx_touch_bridge_run(uint64_t bridge_pa)
@@ -196,6 +197,13 @@ onyx_touch_wr(vm_offset_t address, uint32_t value)
 static void
 onyx_gpi_probe(void)
 {
+	if (!onyx_gcc) {
+		onyx_gcc = ml_io_map(ONYX_GCC_PHYS, ONYX_GCC_SIZE);
+	}
+	if (!onyx_gcc || !onyx_clocks_on()) {
+		printf("onyx-touch: QUP clocks unavailable before GPI probe\n");
+		return;
+	}
 	onyx_gpi = ml_io_map(ONYX_GPI1_PHYS, ONYX_GPI_SIZE);
 	if (!onyx_gpi) {
 		printf("onyx-touch: cannot map QUP1 GPI\n");
