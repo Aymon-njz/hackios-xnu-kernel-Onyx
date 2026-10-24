@@ -198,6 +198,7 @@ onyx_touch_say(const char *format, ...)
 #define M_CMD_DONE               (1u << 0)
 #define M_CMD_CANCEL             (1u << 4)
 #define M_CMD_ABORT              (1u << 5)
+#define M_FIFO_IRQS              ((1u << 0) | (1u << 26) | (1u << 27) | (1u << 30))
 #define M_ERRORS                 ((1u << 1) | (1u << 2) | (1u << 3) | (1u << 24) | (1u << 25) | (1u << 28) | (1u << 29))
 #define SPI_FULL_DUPLEX          (3u << 27)
 
@@ -555,6 +556,30 @@ onyx_gpi_prepare(void)
 	state->channels_on = true;
 	printf("onyx-touch: GPI event/TX/RX rings are active\n");
 	return true;
+}
+
+/* Match qcom-geni-se.c's geni_se_select_gpi_mode() for the GPI-only SE4. */
+static void
+onyx_geni_select_gpi_mode(void)
+{
+	uint32_t irq;
+
+	/* Clear stale FIFO/DMA state before handing SE4 to the GPI engine. */
+	onyx_touch_wr(SE_GSI_EVENT_EN(onyx_se), 0);
+	onyx_touch_wr(GENI_M_IRQ_CLEAR(onyx_se), 0xffffffff);
+	onyx_touch_wr(GENI_S_IRQ_CLEAR(onyx_se), 0xffffffff);
+	onyx_touch_wr(SE_DMA_TX_IRQ_CLR(onyx_se), 0xffffffff);
+	onyx_touch_wr(SE_DMA_RX_IRQ_CLR(onyx_se), 0xffffffff);
+	onyx_touch_wr(SE_IRQ_EN(onyx_se), 0);
+	irq = onyx_touch_rd(GENI_M_IRQ_EN(onyx_se)) & ~M_FIFO_IRQS;
+	onyx_touch_wr(GENI_M_IRQ_EN(onyx_se), irq);
+	onyx_touch_wr(GENI_DMA_MODE_EN(onyx_se), 1);
+	onyx_touch_wr(SE_GSI_EVENT_EN(onyx_se),
+	    onyx_touch_rd(SE_GSI_EVENT_EN(onyx_se)) | 0xf);
+	__asm__ volatile ("dsb sy" ::: "memory");
+	printf("onyx-touch: SE4 GPI mode dma %#x gsi-events %#x m-irq %#x\n",
+	    onyx_touch_rd(GENI_DMA_MODE_EN(onyx_se)), onyx_touch_rd(SE_GSI_EVENT_EN(onyx_se)),
+	    onyx_touch_rd(GENI_M_IRQ_EN(onyx_se)));
 }
 
 /*
@@ -1105,6 +1130,7 @@ onyx_touch_gpi_run(void)
 		printf("onyx-touch: SE4 is not in the expected GPI-only mode\n");
 		return;
 	}
+	onyx_geni_select_gpi_mode();
 	onyx_gpio_configure(ONYX_PIN_MISO, ONYX_PIN_FUNCTION_SPI, false);
 	onyx_gpio_configure(ONYX_PIN_MOSI, ONYX_PIN_FUNCTION_SPI, false);
 	onyx_gpio_configure(ONYX_PIN_CLK, ONYX_PIN_FUNCTION_SPI, false);
