@@ -1114,12 +1114,17 @@ onyx_touch_gpi_run(void)
 	if (!onyx_gpi_prepare()) {
 		return;
 	}
-	for (unsigned reads = 0;;) {
+	for (unsigned reads = 0, idle = 0;;) {
 		uint8_t report[ONYX_NVT_REPORT];
 		bool asserted = !onyx_gpio_get(ONYX_PIN_IRQ);
 
-		/* Poll as a safety net: the panel's IRQ is level-triggered. */
-		if (asserted || reads == 0) {
+		/*
+		 * IRQ is only an accelerator.  The panel's pin can be held by
+		 * firmware during handoff, so retain a periodic poll just like the
+		 * proven FIFO path; otherwise one missed level leaves touch inert.
+		 */
+		if (asserted || reads == 0 || ++idle >= 10) {
+			idle = 0;
 			if (onyx_nvt_gpi_read(ONYX_NVT_EVENT, report, sizeof(report))) {
 				if (reads++ == 0) {
 					printf("onyx-touch: first native report irq=%u data %02x %02x %02x %02x %02x %02x\n",
