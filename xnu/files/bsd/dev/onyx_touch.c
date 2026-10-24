@@ -26,6 +26,8 @@ extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 #define ONYX_SE_SIZE             0x4000UL
 #define ONYX_GPI1_PHYS           0x00a00000UL
 #define ONYX_GPI_SIZE            0x60000UL
+#define ONYX_APPS_SMMU_PHYS      0x15000000UL
+#define ONYX_GPI_STREAM          0x00b6U
 
 #define GPIO_CFG(base, n)        ((base) + 0x1000UL * (n))
 #define GPIO_IO(base, n)         ((base) + 0x1000UL * (n) + 4)
@@ -108,6 +110,19 @@ extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 #define GPI_GPII_IRQ             0x13118UL
 #define GPI_ERROR_LOG            0x13200UL
 #define GPI_CH_SCRATCH(k, n)     (0x10060UL + 0x80UL * (k) + 4UL * (n))
+
+#define SMMU_SCR0                0x000UL
+#define SMMU_IDR0                0x020UL
+#define SMMU_IDR1                0x024UL
+#define SMMU_SGFSR               0x048UL
+#define SMMU_SGFSYNR1            0x054UL
+#define SMMU_SMR(n)              (0x800UL + 4UL * (n))
+#define SMMU_S2CR(n)             (0xc00UL + 4UL * (n))
+#define SMMU_CB_SCTLR            0x000UL
+#define SMMU_CB_TTBR0            0x020UL
+#define SMMU_CB_FSR              0x058UL
+#define SMMU_CB_FAR              0x060UL
+#define SMMU_CB_FSYNR0           0x068UL
 
 #define M_CMD_DONE               (1u << 0)
 #define M_CMD_CANCEL             (1u << 4)
@@ -194,6 +209,75 @@ onyx_touch_wr(vm_offset_t address, uint32_t value)
 	*(volatile uint32_t *)address = value;
 }
 
+/*
+ * GPI's DMA addresses are translated by the application-processor SMMU as
+ * stream 0xb6 on Tuna.  Before taking a context, record whether firmware left
+ * that stream translated, bypassed, faulting, or unmatched.  This is strictly
+ * read-only: choosing a free match/context safely is a later diagnostic.
+ */
+static void
+onyx_smmu_probe(void)
+{
+	vm_offset_t smmu = ml_io_map(ONYX_APPS_SMMU_PHYS, 0x2000);
+	bool used[256] = { false };
+	uint32_t scr0, idr0, idr1, matches, contexts, page, pages;
+	uint32_t covering = UINT32_MAX, free_match = UINT32_MAX, free_context;
+
+	if (!smmu) {
+		printf("onyx-touch: cannot map apps SMMU\n");
+		return;
+	}
+	scr0 = onyx_touch_rd(smmu + SMMU_SCR0);
+	idr0 = onyx_touch_rd(smmu + SMMU_IDR0);
+	idr1 = onyx_touch_rd(smmu + SMMU_IDR1);
+	matches = idr0 & 0xff;
+	contexts = idr1 & 0xff;
+	page = idr1 >> 31 ? 0x10000 : 0x1000;
+	pages = 2u << (idr1 >> 28 & 7);
+	printf("onyx-touch: apps SMMU scr0 %#x idr0 %#x idr1 %#x; %u matches %u contexts, page %#x pages %u, global fault %#x stream %#x\n",
+	    scr0, idr0, idr1, matches, contexts, page, pages,
+	    onyx_touch_rd(smmu + SMMU_SGFSR), onyx_touch_rd(smmu + SMMU_SGFSYNR1));
+	for (uint32_t n = 0; n < matches && SMMU_SMR(n) < 0xc00; n++) {
+		uint32_t smr = onyx_touch_rd(smmu + SMMU_SMR(n));
+		uint32_t s2cr = onyx_touch_rd(smmu + SMMU_S2CR(n));
+
+		if (!(smr >> 31)) {
+			if (free_match == UINT32_MAX) {
+				free_match = n;
+			}
+			continue;
+		}
+		used[s2cr & 0xff] = true;
+		uint32_t stream = smr & 0x7fff, mask = smr >> 16 & 0x7fff;
+		if (((stream ^ ONYX_GPI_STREAM) & ~mask) == 0) {
+			covering = n;
+			printf("onyx-touch: apps SMMU match %u covers GPI stream %#x: smr %#x stream %#x mask %#x s2cr %#x type %u context %u\n",
+			    n, ONYX_GPI_STREAM, smr, stream, mask, s2cr, s2cr >> 16 & 3, s2cr & 0xff);
+		}
+	}
+	for (free_context = 0; free_context < contexts && used[free_context]; free_context++) {
+	}
+	printf("onyx-touch: apps SMMU GPI stream %s; first free match %u context %u\n",
+	    covering == UINT32_MAX ? "is unmatched" : "has a covering match",
+	    free_match, free_context);
+	if (covering != UINT32_MAX) {
+		uint32_t s2cr = onyx_touch_rd(smmu + SMMU_S2CR(covering));
+		uint32_t context = s2cr & 0xff;
+		if ((s2cr >> 16 & 3) == 0 && context < contexts) {
+			vm_offset_t cb = ml_io_map(ONYX_APPS_SMMU_PHYS +
+			    (vm_offset_t)(pages + context) * page, 0x1000);
+
+			if (cb) {
+				printf("onyx-touch: apps SMMU context %u sctlr %#x ttbr0 %08x:%08x fsr %#x far %08x:%08x fsynr0 %#x\n",
+				    context, onyx_touch_rd(cb + SMMU_CB_SCTLR),
+				    onyx_touch_rd(cb + SMMU_CB_TTBR0 + 4), onyx_touch_rd(cb + SMMU_CB_TTBR0),
+				    onyx_touch_rd(cb + SMMU_CB_FSR), onyx_touch_rd(cb + SMMU_CB_FAR + 4),
+				    onyx_touch_rd(cb + SMMU_CB_FAR), onyx_touch_rd(cb + SMMU_CB_FSYNR0));
+			}
+		}
+	}
+}
+
 static void
 onyx_gpi_probe(void)
 {
@@ -209,6 +293,7 @@ onyx_gpi_probe(void)
 		printf("onyx-touch: cannot map QUP1 GPI\n");
 		return;
 	}
+	onyx_smmu_probe();
 	printf("onyx-touch: GPII0 read-only state at %#lx\n", (unsigned long)onyx_gpi);
 	for (unsigned channel = 0; channel < 2; channel++) {
 		vm_offset_t context = onyx_gpi + GPI_CH_CONTEXT(channel);
