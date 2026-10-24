@@ -24,6 +24,8 @@ extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 #define ONYX_GCC_SIZE            0x60000UL
 #define ONYX_SE4_PHYS            0x00a90000UL
 #define ONYX_SE_SIZE             0x4000UL
+#define ONYX_GPI1_PHYS           0x00a00000UL
+#define ONYX_GPI_SIZE            0x60000UL
 
 #define GPIO_CFG(base, n)        ((base) + 0x1000UL * (n))
 #define GPIO_IO(base, n)         ((base) + 0x1000UL * (n) + 4)
@@ -88,6 +90,25 @@ extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 #define ONYX_XO_HZ               19200000U
 #define ONYX_PIN_FUNCTION_SPI    1
 
+/* Tuna uses a 0x10000 EE adjustment for QUP1 GPI.  These offsets are from
+ * the DT's 0xa00000 resource, after applying that adjustment to Qualcomm's
+ * public GPI register layout. */
+#define GPI_CH_CONTEXT(k)        (0x10000UL + 0x80UL * (k))
+#define GPI_EV_CONTEXT           0x11000UL
+#define GPI_CH_DOORBELL(k)       (0x12000UL + 0x08UL * (k))
+#define GPI_EV_DOORBELL          0x12100UL
+#define GPI_CH_CMD               0x13008UL
+#define GPI_EV_CMD               0x13010UL
+#define GPI_IRQ_TYPE             0x13080UL
+#define GPI_IRQ_MASK             0x13088UL
+#define GPI_CH_IRQ               0x13090UL
+#define GPI_EV_IRQ               0x13094UL
+#define GPI_IEOB_IRQ             0x130b0UL
+#define GPI_GLOB_IRQ             0x13100UL
+#define GPI_GPII_IRQ             0x13118UL
+#define GPI_ERROR_LOG            0x13200UL
+#define GPI_CH_SCRATCH(k, n)     (0x10060UL + 0x80UL * (k) + 4UL * (n))
+
 #define M_CMD_DONE               (1u << 0)
 #define M_CMD_CANCEL             (1u << 4)
 #define M_CMD_ABORT              (1u << 5)
@@ -122,7 +143,7 @@ struct onyx_touch_bridge {
 	uint8_t report[ONYX_NVT_REPORT];
 } __attribute__((aligned(128)));
 
-static vm_offset_t onyx_tlmm, onyx_gcc, onyx_se;
+static vm_offset_t onyx_tlmm, onyx_gcc, onyx_se, onyx_gpi;
 static uint32_t onyx_fifo_depth, onyx_se_source_hz, onyx_se_clock_select;
 static struct {
 	bool down, seen;
@@ -170,6 +191,46 @@ static inline void
 onyx_touch_wr(vm_offset_t address, uint32_t value)
 {
 	*(volatile uint32_t *)address = value;
+}
+
+static void
+onyx_gpi_probe(void)
+{
+	onyx_gpi = ml_io_map(ONYX_GPI1_PHYS, ONYX_GPI_SIZE);
+	if (!onyx_gpi) {
+		printf("onyx-touch: cannot map QUP1 GPI\n");
+		return;
+	}
+	printf("onyx-touch: GPII0 read-only state at %#lx\n", (unsigned long)onyx_gpi);
+	for (unsigned channel = 0; channel < 2; channel++) {
+		vm_offset_t context = onyx_gpi + GPI_CH_CONTEXT(channel);
+
+		printf("onyx-touch: GPI ch%u ctx %#x len %#x base %08x:%08x rp %08x:%08x wp %08x:%08x db %08x:%08x\n",
+		    channel, onyx_touch_rd(context), onyx_touch_rd(context + 4),
+		    onyx_touch_rd(context + 12), onyx_touch_rd(context + 8),
+		    onyx_touch_rd(context + 20), onyx_touch_rd(context + 16),
+		    onyx_touch_rd(context + 28), onyx_touch_rd(context + 24),
+		    onyx_touch_rd(onyx_gpi + GPI_CH_DOORBELL(channel) + 4),
+		    onyx_touch_rd(onyx_gpi + GPI_CH_DOORBELL(channel)));
+		printf("onyx-touch: GPI ch%u scratch %08x %08x %08x %08x\n", channel,
+		    onyx_touch_rd(onyx_gpi + GPI_CH_SCRATCH(channel, 0)),
+		    onyx_touch_rd(onyx_gpi + GPI_CH_SCRATCH(channel, 1)),
+		    onyx_touch_rd(onyx_gpi + GPI_CH_SCRATCH(channel, 2)),
+		    onyx_touch_rd(onyx_gpi + GPI_CH_SCRATCH(channel, 3)));
+	}
+	vm_offset_t event = onyx_gpi + GPI_EV_CONTEXT;
+	printf("onyx-touch: GPI event ctx %#x len %#x base %08x:%08x rp %08x:%08x wp %08x:%08x db %08x:%08x\n",
+	    onyx_touch_rd(event), onyx_touch_rd(event + 4),
+	    onyx_touch_rd(event + 12), onyx_touch_rd(event + 8),
+	    onyx_touch_rd(event + 20), onyx_touch_rd(event + 16),
+	    onyx_touch_rd(event + 28), onyx_touch_rd(event + 24),
+	    onyx_touch_rd(onyx_gpi + GPI_EV_DOORBELL + 4), onyx_touch_rd(onyx_gpi + GPI_EV_DOORBELL));
+	printf("onyx-touch: GPI commands ch %#x ev %#x; irq type %#x mask %#x ch %#x ev %#x ieob %#x global %#x gpii %#x error %#x\n",
+	    onyx_touch_rd(onyx_gpi + GPI_CH_CMD), onyx_touch_rd(onyx_gpi + GPI_EV_CMD),
+	    onyx_touch_rd(onyx_gpi + GPI_IRQ_TYPE), onyx_touch_rd(onyx_gpi + GPI_IRQ_MASK),
+	    onyx_touch_rd(onyx_gpi + GPI_CH_IRQ), onyx_touch_rd(onyx_gpi + GPI_EV_IRQ),
+	    onyx_touch_rd(onyx_gpi + GPI_IEOB_IRQ), onyx_touch_rd(onyx_gpi + GPI_GLOB_IRQ),
+	    onyx_touch_rd(onyx_gpi + GPI_GPII_IRQ), onyx_touch_rd(onyx_gpi + GPI_ERROR_LOG));
 }
 
 static void
@@ -519,7 +580,7 @@ onyx_touch_run(void)
 static void
 onyx_touch_probe_thread(__unused void *parameter, __unused wait_result_t result)
 {
-	int mmio = 0, run = 0, geni = 0;
+	int mmio = 0, run = 0, geni = 0, gpi_probe = 0;
 	uint64_t bridge_pa = 0;
 	vm_offset_t tlmm, se;
 
@@ -533,6 +594,10 @@ onyx_touch_probe_thread(__unused void *parameter, __unused wait_result_t result)
 	    ONYX_SE4_PHYS, 0x031400);
 	if (PE_parse_boot_argn("onyx_touch_shared_pa", &bridge_pa, sizeof(bridge_pa)) && bridge_pa != 0) {
 		onyx_touch_bridge_run(bridge_pa);
+		return;
+	}
+	if (PE_parse_boot_argn("onyx_touch_gpi_probe", &gpi_probe, sizeof(gpi_probe)) && gpi_probe == 1) {
+		onyx_gpi_probe();
 		return;
 	}
 	if (PE_parse_boot_argn("onyx_touch_geni", &geni, sizeof(geni)) && geni == 1) {
