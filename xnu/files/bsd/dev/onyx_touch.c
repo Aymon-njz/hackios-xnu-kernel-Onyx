@@ -59,11 +59,6 @@ onyx_touch_say(const char *format, ...)
 
 #define GPIO_CFG(base, n)        ((base) + 0x1000UL * (n))
 #define GPIO_IO(base, n)         ((base) + 0x1000UL * (n) + 4)
-/* TLMM interrupt config/status words, as used by the stock Qualcomm GPIO
- * driver.  The raw latch is local to TLMM and does not route an interrupt to
- * XNU's GIC. */
-#define GPIO_INTR_CFG(base, n)   ((base) + 0x1000UL * (n) + 8)
-#define GPIO_INTR_STATUS(base, n) ((base) + 0x1000UL * (n) + 0xc)
 #define GENI_FORCE_DEFAULT(base) ((base) + 0x020)
 #define GENI_OUTPUT_CTRL(base)   ((base) + 0x024)
 #define GENI_CGC_CTRL(base)      ((base) + 0x028)
@@ -803,30 +798,6 @@ static inline bool
 onyx_gpio_get(unsigned pin)
 {
 	return onyx_touch_rd(GPIO_IO(onyx_tlmm, pin)) & 1;
-}
-
-/*
- * Mirror Bergamota's safe GSI-only approach: record edges in TLMM instead of
- * taking the serial engine, GPI DMA stream, or its SMMU context.  The Novatek
- * line is normally active-low, but either edge is a useful hint; the report
- * parser remains authoritative and a slow periodic read is kept as backup.
- */
-static void
-onyx_gpio_irq_latch_enable(unsigned pin)
-{
-	onyx_touch_wr(GPIO_INTR_CFG(onyx_tlmm, pin), (1u << 4) | (1u << 2) | (1u << 1));
-	onyx_touch_wr(GPIO_INTR_STATUS(onyx_tlmm, pin), 0);
-}
-
-static bool
-onyx_gpio_irq_latched(unsigned pin)
-{
-	bool pending = (onyx_touch_rd(GPIO_INTR_STATUS(onyx_tlmm, pin)) & 1) != 0;
-
-	if (pending) {
-		onyx_touch_wr(GPIO_INTR_STATUS(onyx_tlmm, pin), 0);
-	}
-	return pending;
 }
 
 /* A deliberately slow mode-0 SPI fallback that avoids SE4/GPI completely.
