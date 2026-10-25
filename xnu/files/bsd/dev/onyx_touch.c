@@ -1277,7 +1277,7 @@ onyx_touch_bitbang_run(void)
 static void
 onyx_touch_gpi_run(void)
 {
-	int live = 0, stage = 0;
+	int live = 0, stage = 0, skip_pins = 0;
 
 	/*
 	 * A previous native attempt reset before its first kernel-log checkpoint.
@@ -1295,6 +1295,7 @@ onyx_touch_gpi_run(void)
 	    onyx_touch_rd(GENI_IF_DISABLE_RO(onyx_se)),
 	    onyx_touch_rd(SE_HW_PARAM_0(onyx_se)));
 	PE_parse_boot_argn("onyx_touch_gpi_stage", &stage, sizeof(stage));
+	PE_parse_boot_argn("onyx_touch_gpi_skip_pins", &skip_pins, sizeof(skip_pins));
 	/* Keep the old explicit live flag as the all-stages compatibility switch. */
 	if (PE_parse_boot_argn("onyx_touch_gpi_live", &live, sizeof(live)) && live == 1) {
 		stage = 4;
@@ -1320,12 +1321,21 @@ onyx_touch_gpi_run(void)
 		printf("onyx-touch: stopping before pin mux (stage %d)\n", stage);
 		return;
 	}
-	onyx_gpio_configure(ONYX_PIN_MISO, ONYX_PIN_FUNCTION_SPI, false);
-	onyx_gpio_configure(ONYX_PIN_MOSI, ONYX_PIN_FUNCTION_SPI, false);
-	onyx_gpio_configure(ONYX_PIN_CLK, ONYX_PIN_FUNCTION_SPI, false);
-	onyx_gpio_configure(ONYX_PIN_CS, ONYX_PIN_FUNCTION_SPI, false);
-	onyx_gpio_configure(ONYX_PIN_IRQ, 0, false);
-	printf("onyx-touch: GPI checkpoint 4: SPI/IRQ pins selected\n");
+	if (skip_pins == 1) {
+		/*
+		 * The firmware has already configured the live panel route.  Onyx
+		 * resets while rewriting GPIO16..19 from XNU, so retain that routing
+		 * and use the GPI engine without touching TLMM.
+		 */
+		printf("onyx-touch: GPI checkpoint 4: preserving firmware SPI pin state\n");
+	} else {
+		onyx_gpio_configure(ONYX_PIN_MISO, ONYX_PIN_FUNCTION_SPI, false);
+		onyx_gpio_configure(ONYX_PIN_MOSI, ONYX_PIN_FUNCTION_SPI, false);
+		onyx_gpio_configure(ONYX_PIN_CLK, ONYX_PIN_FUNCTION_SPI, false);
+		onyx_gpio_configure(ONYX_PIN_CS, ONYX_PIN_FUNCTION_SPI, false);
+		onyx_gpio_configure(ONYX_PIN_IRQ, 0, false);
+		printf("onyx-touch: GPI checkpoint 4: SPI/IRQ pins selected\n");
+	}
 	if (stage < 4) {
 		printf("onyx-touch: stopping before GPI/SMMU ownership (stage %d)\n", stage);
 		return;
