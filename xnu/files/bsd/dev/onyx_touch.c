@@ -882,6 +882,43 @@ onyx_nvt_bitbang_read(uint32_t address, uint8_t *data, uint32_t length)
 	return true;
 }
 
+/*
+ * Match the Android driver's nvt_write_addr(): page-select first, then a
+ * Novatek write whose command byte CTP_SPI_WRITE changes to bit7=1.  Keeping
+ * this beside the GPIO reader makes the direct fallback a complete NT38771
+ * client instead of a passive event-buffer sampler.
+ */
+static bool
+onyx_nvt_bitbang_write(uint32_t address, const uint8_t *data, uint32_t length)
+{
+	uint8_t page[3] = { 0xff, (uint8_t)(address >> 15), (uint8_t)(address >> 7) };
+	uint8_t tx[ONYX_NVT_REPORT + 1] = { 0 };
+
+	if (length == 0 || length >= sizeof(tx)) {
+		return false;
+	}
+	tx[0] = (uint8_t)(address & 0x7f) | 0x80;
+	memcpy(tx + 1, data, length);
+	onyx_bitbang_transfer(page, NULL, sizeof(page));
+	onyx_bitbang_transfer(tx, NULL, length + 1);
+	return true;
+}
+
+/* Android's nvt_bootloader_reset() calls nvt_write_addr(EVENT_BUF_ADDR, 0x69)
+ * and waits 35 ms.  This wakes the controller firmware after the bootloader
+ * hands pin ownership to us; it does not reset the phone or alter flash. */
+static bool
+onyx_nvt_bitbang_bootloader_reset(void)
+{
+	static const uint8_t reset = 0x69;
+
+	if (!onyx_nvt_bitbang_write(ONYX_NVT_EVENT, &reset, sizeof(reset))) {
+		return false;
+	}
+	delay_for_interval(35, NSEC_PER_MSEC);
+	return true;
+}
+
 static uint32_t
 onyx_rcg_rate(uint32_t cfg, uint32_t m, uint32_t not_n_minus_m)
 {
@@ -1225,7 +1262,11 @@ onyx_touch_bitbang_run(void)
 	onyx_bitbang_init();
 	onyx_gpio_configure(ONYX_PIN_IRQ, 0, false);
 	onyx_gpio_irq_latch_enable(ONYX_PIN_IRQ);
-	printf("onyx-touch: NT38771 GPIO SPI enabled; TLMM edge latch armed (no GPI/SMMU ownership)\n");
+	if (!onyx_nvt_bitbang_bootloader_reset()) {
+		printf("onyx-touch: NT38771 GPIO bootloader reset could not be sent\n");
+		return;
+	}
+	printf("onyx-touch: NT38771 GPIO SPI enabled; controller reset and TLMM edge latch armed (no GPI/SMMU ownership)\n");
 	for (unsigned reads = 0, idle = 0;;) {
 		uint8_t report[ONYX_NVT_REPORT];
 		bool asserted = !onyx_gpio_get(ONYX_PIN_IRQ);
