@@ -1353,19 +1353,29 @@ onyx_touch_probe_thread(__unused void *parameter, __unused wait_result_t result)
 		onyx_touch_bridge_run(bridge_pa);
 		return;
 	}
-	if (PE_parse_boot_argn("onyx_touch_gpi_probe", &gpi_probe, sizeof(gpi_probe)) && gpi_probe == 1) {
-		onyx_gpi_probe();
-		return;
-	}
-	if (PE_parse_boot_argn("onyx_touch_gpi", &gpi, sizeof(gpi)) && gpi == 1) {
-		onyx_touch_gpi_run();
-		return;
-	}
-	if (PE_parse_boot_argn("onyx_touch_bitbang", &bitbang, sizeof(bitbang)) && bitbang == 1) {
+	/* Parse every transport switch before acting on any of them.  Earlier
+	 * logs showed an unexpected GPI selection with only the GPIO argument in
+	 * the recorded command line, so record the actual parser results and let
+	 * the explicitly requested firmware-free fallback win. */
+	PE_parse_boot_argn("onyx_touch_gpi_probe", &gpi_probe, sizeof(gpi_probe));
+	PE_parse_boot_argn("onyx_touch_gpi", &gpi, sizeof(gpi));
+	PE_parse_boot_argn("onyx_touch_bitbang", &bitbang, sizeof(bitbang));
+	PE_parse_boot_argn("onyx_touch_geni", &geni, sizeof(geni));
+	printf("onyx-touch: transport args gpio=%d gpi=%d gpi-probe=%d geni=%d\n",
+	    bitbang, gpi, gpi_probe, geni);
+	if (bitbang == 1) {
 		onyx_touch_bitbang_run();
 		return;
 	}
-	if (PE_parse_boot_argn("onyx_touch_geni", &geni, sizeof(geni)) && geni == 1) {
+	if (gpi_probe == 1) {
+		onyx_gpi_probe();
+		return;
+	}
+	if (gpi == 1) {
+		onyx_touch_gpi_run();
+		return;
+	}
+	if (geni == 1) {
 		onyx_touch_run();
 		return;
 	}
