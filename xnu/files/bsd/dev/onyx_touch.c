@@ -59,6 +59,11 @@ onyx_touch_say(const char *format, ...)
 
 #define GPIO_CFG(base, n)        ((base) + 0x1000UL * (n))
 #define GPIO_IO(base, n)         ((base) + 0x1000UL * (n) + 4)
+/* TLMM interrupt config/status words, as used by the stock Qualcomm GPIO
+ * driver.  The raw latch is local to TLMM and does not route an interrupt to
+ * XNU's GIC. */
+#define GPIO_INTR_CFG(base, n)   ((base) + 0x1000UL * (n) + 8)
+#define GPIO_INTR_STATUS(base, n) ((base) + 0x1000UL * (n) + 0xc)
 #define GENI_FORCE_DEFAULT(base) ((base) + 0x020)
 #define GENI_OUTPUT_CTRL(base)   ((base) + 0x024)
 #define GENI_CGC_CTRL(base)      ((base) + 0x028)
@@ -800,6 +805,30 @@ onyx_gpio_get(unsigned pin)
 	return onyx_touch_rd(GPIO_IO(onyx_tlmm, pin)) & 1;
 }
 
+/*
+ * Mirror Bergamota's safe GSI-only approach: record edges in TLMM instead of
+ * taking the serial engine, GPI DMA stream, or its SMMU context.  The Novatek
+ * line is normally active-low, but either edge is a useful hint; the report
+ * parser remains authoritative and a slow periodic read is kept as backup.
+ */
+static void
+onyx_gpio_irq_latch_enable(unsigned pin)
+{
+	onyx_touch_wr(GPIO_INTR_CFG(onyx_tlmm, pin), (1u << 4) | (1u << 2) | (1u << 1));
+	onyx_touch_wr(GPIO_INTR_STATUS(onyx_tlmm, pin), 0);
+}
+
+static bool
+onyx_gpio_irq_latched(unsigned pin)
+{
+	bool pending = (onyx_touch_rd(GPIO_INTR_STATUS(onyx_tlmm, pin)) & 1) != 0;
+
+	if (pending) {
+		onyx_touch_wr(GPIO_INTR_STATUS(onyx_tlmm, pin), 0);
+	}
+	return pending;
+}
+
 /* A deliberately slow mode-0 SPI fallback that avoids SE4/GPI completely. */
 static void
 onyx_bitbang_init(void)
@@ -1195,18 +1224,24 @@ onyx_touch_bitbang_run(void)
 	}
 	onyx_bitbang_init();
 	onyx_gpio_configure(ONYX_PIN_IRQ, 0, false);
-	printf("onyx-touch: NT38771 direct GPIO SPI enabled (pins 16..19)\n");
+	onyx_gpio_irq_latch_enable(ONYX_PIN_IRQ);
+	printf("onyx-touch: NT38771 GPIO SPI enabled; TLMM edge latch armed (no GPI/SMMU ownership)\n");
 	for (unsigned reads = 0, idle = 0;;) {
 		uint8_t report[ONYX_NVT_REPORT];
 		bool asserted = !onyx_gpio_get(ONYX_PIN_IRQ);
+		bool edge = onyx_gpio_irq_latched(ONYX_PIN_IRQ);
 
-		if (asserted || reads == 0 || ++idle >= 10) {
+		/* Bit-banged SPI is intentionally only sampled on a panel edge, a
+		 * held-low IRQ, or a low-rate safety poll.  This prevents the kernel
+		 * from continually stealing the board's GPIOs while idle. */
+		if (edge || asserted || reads == 0 || ++idle >= 15) {
 			idle = 0;
 			if (onyx_nvt_bitbang_read(ONYX_NVT_EVENT, report, sizeof(report))) {
-				/* Keep a compact sample in the persistent log's retained tail. */
-				if (reads++ % 8 == 0) {
-					printf("onyx-touch: GPIO sample irq=%u data %02x %02x %02x %02x %02x %02x %02x %02x\n",
-					    asserted, report[1], report[2], report[3], report[4], report[5], report[6], report[7], report[8]);
+				/* Keep enough evidence to distinguish a quiet panel from a bad
+				 * SPI frame without flooding SpringBoard's console. */
+				if (reads++ < 2 || edge) {
+					printf("onyx-touch: GPIO sample irq=%u edge=%u data %02x %02x %02x %02x %02x %02x %02x %02x\n",
+					    asserted, edge, report[1], report[2], report[3], report[4], report[5], report[6], report[7], report[8]);
 				}
 				onyx_touch_report(report);
 			}
