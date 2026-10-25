@@ -933,14 +933,14 @@ onyx_geni_init(uint32_t hz)
 	if ((onyx_touch_rd(GENI_FW_REVISION_RO(onyx_se)) >> 8 & 0xff) != 1) {
 		return "SE4 has no SPI firmware";
 	}
-	/*
-	 * GENI_IF_DISABLE_RO advertises the firmware's preferred interface.  The
-	 * Qualcomm SPI driver still falls back to FIFO mode when GPI DMA is not
-	 * available, even when this bit is set.  XNU has no GPI stack yet, so do
-	 * the same instead of abandoning an otherwise live SPI engine.
-	 */
 	if (onyx_touch_rd(GENI_IF_DISABLE_RO(onyx_se)) & 1) {
-		printf("onyx-touch: SE4 advertises GPI-only; forcing the supported FIFO fallback\n");
+		/*
+		 * Onyx's live FDT and firmware both mark SE4 as GPI-only.  Writing
+		 * FIFO state here is not a fallback: it conflicts with the firmware
+		 * owner and can reset the AP.  Leave this engine untouched unless a
+		 * proper GPI transaction path was explicitly selected.
+		 */
+		return "SE4 is GPI-only; refusing FIFO access";
 	}
 	onyx_fifo_depth = onyx_touch_rd(SE_HW_PARAM_0(onyx_se)) >> 16 & 0x3f;
 	if (onyx_fifo_depth < 4) {
@@ -1219,18 +1219,36 @@ onyx_touch_bitbang_run(void)
 static void
 onyx_touch_gpi_run(void)
 {
+	int live = 0;
+
+	/*
+	 * A previous native attempt reset before its first kernel-log checkpoint.
+	 * Map and inventory SE4 first, without voting clocks, changing pin muxes,
+	 * claiming an SMMU stream, or writing a GPI register.  This must be the
+	 * default for onyx_touch_gpi=1; full transport is an opt-in second stage.
+	 */
+	onyx_se = ml_io_map(ONYX_SE4_PHYS, ONYX_SE_SIZE);
+	if (!onyx_se || !(onyx_touch_rd(GENI_IF_DISABLE_RO(onyx_se)) & 1)) {
+		printf("onyx-touch: SE4 is not in the expected GPI-only mode\n");
+		return;
+	}
+	printf("onyx-touch: GPI checkpoint 1: SE4 fw %#x iface %#x hw %#x (read-only)\n",
+	    onyx_touch_rd(GENI_FW_REVISION_RO(onyx_se)),
+	    onyx_touch_rd(GENI_IF_DISABLE_RO(onyx_se)),
+	    onyx_touch_rd(SE_HW_PARAM_0(onyx_se)));
+	if (!PE_parse_boot_argn("onyx_touch_gpi_live", &live, sizeof(live)) || live != 1) {
+		printf("onyx-touch: GPI live transport withheld; use onyx_touch_gpi_live=1 after this checkpoint is retained\n");
+		return;
+	}
 	onyx_tlmm = ml_io_map(ONYX_TLMM_PHYS, ONYX_TLMM_SIZE);
 	onyx_gcc = ml_io_map(ONYX_GCC_PHYS, ONYX_GCC_SIZE);
 	if (!onyx_tlmm || !onyx_gcc || !onyx_clocks_on()) {
 		printf("onyx-touch: cannot prepare TLMM/GCC for GPI\n");
 		return;
 	}
-	onyx_se = ml_io_map(ONYX_SE4_PHYS, ONYX_SE_SIZE);
-	if (!onyx_se || !(onyx_touch_rd(GENI_IF_DISABLE_RO(onyx_se)) & 1)) {
-		printf("onyx-touch: SE4 is not in the expected GPI-only mode\n");
-		return;
-	}
+	printf("onyx-touch: GPI checkpoint 2: clocks are live\n");
 	onyx_geni_select_gpi_mode();
+	printf("onyx-touch: GPI checkpoint 3: SE4 selected GPI mode\n");
 	onyx_gpio_configure(ONYX_PIN_MISO, ONYX_PIN_FUNCTION_SPI, false);
 	onyx_gpio_configure(ONYX_PIN_MOSI, ONYX_PIN_FUNCTION_SPI, false);
 	onyx_gpio_configure(ONYX_PIN_CLK, ONYX_PIN_FUNCTION_SPI, false);
