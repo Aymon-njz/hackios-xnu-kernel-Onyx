@@ -118,6 +118,7 @@ onyx_touch_say(const char *format, ...)
 #define ONYX_GCC_SE4_VOTE        (1u << 26)
 #define ONYX_CLOCK_OFF           (1u << 31)
 #define ONYX_XO_HZ               19200000U
+#define ONYX_NVT_SPI_HZ          19200000U
 #define ONYX_PIN_FUNCTION_SPI    1
 
 /* Tuna uses a 0x10000 EE adjustment for QUP1 GPI.  These offsets are from
@@ -649,7 +650,8 @@ onyx_gpi_transfer(const uint8_t *tx, uint8_t *rx, uint32_t length)
 	rx_data = (uint8_t *)(state->pool + ONYX_GPI_RX_DATA_OFF);
 	memcpy(tx_data, tx, length);
 	memset(rx_data, 0, length);
-	divider = (onyx_se_source_hz + 999999) / 1000000;
+	/* The active Novatek node in the recovery FDT caps SPI at 19.2 MHz. */
+	divider = (onyx_se_source_hz + ONYX_NVT_SPI_HZ - 1) / ONYX_NVT_SPI_HZ;
 	if (divider == 0) {
 		divider = 1;
 	}
@@ -1234,7 +1236,7 @@ onyx_touch_gpi_run(void)
 	onyx_gpio_configure(ONYX_PIN_CLK, ONYX_PIN_FUNCTION_SPI, false);
 	onyx_gpio_configure(ONYX_PIN_CS, ONYX_PIN_FUNCTION_SPI, false);
 	onyx_gpio_configure(ONYX_PIN_IRQ, 0, false);
-	printf("onyx-touch: starting native GPI transport for NT38771\n");
+	printf("onyx-touch: starting native 19.2 MHz GPI transport for NT38771\n");
 	if (!onyx_gpi_prepare()) {
 		return;
 	}
@@ -1316,12 +1318,11 @@ onyx_touch_probe_thread(__unused void *parameter, __unused wait_result_t result)
 	}
 	printf("onyx-touch: QUPv3 SE4 mapped at %#lx\n", (unsigned long)se);
 	/*
-	 * Onyx assigns the touch bus to Qualcomm Trusted Touch.  The mappings are
-	 * valid, but a load from the peripheral causes the secure monitor to reset
-	 * the non-secure OS until its ownership handoff has run.  Do not turn a
-	 * diagnostic boot into a reboot loop while that handoff is being ported.
+	 * The live recovery FDT identifies the active device as the normal
+	 * novatek,NVT-ts-spi endpoint on SE4.  A separate, disabled st_fts node
+	 * owns the Trusted-Touch properties; do not apply that policy to Novatek.
 	 */
-	printf("onyx-touch: SE4 is Trusted-Touch owned; raw access remains disabled pending VM handoff\n");
+	printf("onyx-touch: SE4 Novatek endpoint is available; choose GPI transport to start polling\n");
 }
 
 void
