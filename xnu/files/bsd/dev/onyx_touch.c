@@ -829,7 +829,14 @@ onyx_gpio_irq_latched(unsigned pin)
 	return pending;
 }
 
-/* A deliberately slow mode-0 SPI fallback that avoids SE4/GPI completely. */
+/* A deliberately slow mode-0 SPI fallback that avoids SE4/GPI completely.
+ *
+ * Do not repurpose GPIO78 here.  On Onyx the Novatek binding names GPIO78 as
+ * its interrupt, but the live display pinctrl also assigns that pad to MDP
+ * TE/vsync.  The Android driver can arbitrate that shared route; XNU cannot.
+ * Polling the controller over SPI is consequently both sufficient and much
+ * safer for the first native reader.
+ */
 static void
 onyx_bitbang_init(void)
 {
@@ -1254,35 +1261,39 @@ onyx_touch_run(void)
 static void
 onyx_touch_bitbang_run(void)
 {
+	int reset = 0;
+
 	onyx_tlmm = ml_io_map(ONYX_TLMM_PHYS, ONYX_TLMM_SIZE);
 	if (!onyx_tlmm) {
 		printf("onyx-touch: cannot map TLMM for direct SPI\n");
 		return;
 	}
 	onyx_bitbang_init();
-	onyx_gpio_configure(ONYX_PIN_IRQ, 0, false);
-	onyx_gpio_irq_latch_enable(ONYX_PIN_IRQ);
-	if (!onyx_nvt_bitbang_bootloader_reset()) {
-		printf("onyx-touch: NT38771 GPIO bootloader reset could not be sent\n");
-		return;
+	/* GPIO78 is shared with display TE/vsync.  Leave its active mux untouched
+	 * and use bounded periodic polling instead of a raw TLMM interrupt latch. */
+	PE_parse_boot_argn("onyx_touch_reset", &reset, sizeof(reset));
+	if (reset == 1) {
+		printf("onyx-touch: sending explicitly requested NT38771 reset\n");
+		if (!onyx_nvt_bitbang_bootloader_reset()) {
+			printf("onyx-touch: NT38771 GPIO bootloader reset could not be sent\n");
+			return;
+		}
 	}
-	printf("onyx-touch: NT38771 GPIO SPI enabled; controller reset and TLMM edge latch armed (no GPI/SMMU ownership)\n");
+	printf("onyx-touch: NT38771 GPIO SPI polling enabled; display TE/IRQ mux left intact (no GPI/SMMU ownership)\n");
 	for (unsigned reads = 0, idle = 0;;) {
 		uint8_t report[ONYX_NVT_REPORT];
-		bool asserted = !onyx_gpio_get(ONYX_PIN_IRQ);
-		bool edge = onyx_gpio_irq_latched(ONYX_PIN_IRQ);
 
-		/* Bit-banged SPI is intentionally only sampled on a panel edge, a
-		 * held-low IRQ, or a low-rate safety poll.  This prevents the kernel
-		 * from continually stealing the board's GPIOs while idle. */
-		if (edge || asserted || reads == 0 || ++idle >= 15) {
+		/* The shared IRQ/TE pad cannot be sampled safely.  A 120 ms polling
+		 * interval is deliberately conservative and avoids stealing the panel's
+		 * GPIO while still delivering normal finger motion promptly. */
+		if (reads == 0 || ++idle >= 15) {
 			idle = 0;
 			if (onyx_nvt_bitbang_read(ONYX_NVT_EVENT, report, sizeof(report))) {
 				/* Keep enough evidence to distinguish a quiet panel from a bad
 				 * SPI frame without flooding SpringBoard's console. */
-				if (reads++ < 2 || edge) {
-					printf("onyx-touch: GPIO sample irq=%u edge=%u data %02x %02x %02x %02x %02x %02x %02x %02x\n",
-					    asserted, edge, report[1], report[2], report[3], report[4], report[5], report[6], report[7], report[8]);
+				if (reads++ < 2) {
+					printf("onyx-touch: GPIO poll data %02x %02x %02x %02x %02x %02x %02x %02x\n",
+					    report[1], report[2], report[3], report[4], report[5], report[6], report[7], report[8]);
 				}
 				onyx_touch_report(report);
 			}
