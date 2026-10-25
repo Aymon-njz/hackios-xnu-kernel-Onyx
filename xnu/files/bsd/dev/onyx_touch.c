@@ -1219,7 +1219,7 @@ onyx_touch_bitbang_run(void)
 static void
 onyx_touch_gpi_run(void)
 {
-	int live = 0;
+	int live = 0, stage = 0;
 
 	/*
 	 * A previous native attempt reset before its first kernel-log checkpoint.
@@ -1236,8 +1236,13 @@ onyx_touch_gpi_run(void)
 	    onyx_touch_rd(GENI_FW_REVISION_RO(onyx_se)),
 	    onyx_touch_rd(GENI_IF_DISABLE_RO(onyx_se)),
 	    onyx_touch_rd(SE_HW_PARAM_0(onyx_se)));
-	if (!PE_parse_boot_argn("onyx_touch_gpi_live", &live, sizeof(live)) || live != 1) {
-		printf("onyx-touch: GPI live transport withheld; use onyx_touch_gpi_live=1 after this checkpoint is retained\n");
+	PE_parse_boot_argn("onyx_touch_gpi_stage", &stage, sizeof(stage));
+	/* Keep the old explicit live flag as the all-stages compatibility switch. */
+	if (PE_parse_boot_argn("onyx_touch_gpi_live", &live, sizeof(live)) && live == 1) {
+		stage = 4;
+	}
+	if (stage < 1) {
+		printf("onyx-touch: GPI live transport withheld; use onyx_touch_gpi_stage=1 after this checkpoint is retained\n");
 		return;
 	}
 	onyx_tlmm = ml_io_map(ONYX_TLMM_PHYS, ONYX_TLMM_SIZE);
@@ -1247,13 +1252,26 @@ onyx_touch_gpi_run(void)
 		return;
 	}
 	printf("onyx-touch: GPI checkpoint 2: clocks are live\n");
+	if (stage < 2) {
+		printf("onyx-touch: stopping after clock vote (stage %d)\n", stage);
+		return;
+	}
 	onyx_geni_select_gpi_mode();
 	printf("onyx-touch: GPI checkpoint 3: SE4 selected GPI mode\n");
+	if (stage < 3) {
+		printf("onyx-touch: stopping before pin mux (stage %d)\n", stage);
+		return;
+	}
 	onyx_gpio_configure(ONYX_PIN_MISO, ONYX_PIN_FUNCTION_SPI, false);
 	onyx_gpio_configure(ONYX_PIN_MOSI, ONYX_PIN_FUNCTION_SPI, false);
 	onyx_gpio_configure(ONYX_PIN_CLK, ONYX_PIN_FUNCTION_SPI, false);
 	onyx_gpio_configure(ONYX_PIN_CS, ONYX_PIN_FUNCTION_SPI, false);
 	onyx_gpio_configure(ONYX_PIN_IRQ, 0, false);
+	printf("onyx-touch: GPI checkpoint 4: SPI/IRQ pins selected\n");
+	if (stage < 4) {
+		printf("onyx-touch: stopping before GPI/SMMU ownership (stage %d)\n", stage);
+		return;
+	}
 	printf("onyx-touch: starting native 19.2 MHz GPI transport for NT38771\n");
 	if (!onyx_gpi_prepare()) {
 		return;
