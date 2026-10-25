@@ -1376,20 +1376,9 @@ onyx_touch_probe_thread(__unused void *parameter, __unused wait_result_t result)
 		onyx_touch_bridge_run(bridge_pa);
 		return;
 	}
-	/* Onyx's loader currently retains a preceding run's secondary boot
-	 * arguments across payload replacement.  The probe switch itself is
-	 * reliable and is our explicit enablement boundary, so make its first live
-	 * transport the GPIO-only path unconditionally.  It touches neither the
-	 * GPI DMA stream nor the SMMU and is the safe analogue of Bergamota's
-	 * GSI-only fallback. */
-	printf("onyx-touch: probe enabled; selecting GPIO SPI transport\n");
-	onyx_touch_bitbang_run();
-	return;
-
-	/* Parse every transport switch before acting on any of them.  Earlier
-	 * logs showed an unexpected GPI selection with only the GPIO argument in
-	 * the recorded command line, so record the actual parser results and let
-	 * the explicitly requested firmware-free fallback win. */
+	/* Parse every transport switch before acting on any of them.  The GPI
+	 * stage gate makes the first native build read-only: no controller state is
+	 * changed until a later, separately validated stage explicitly requests it. */
 	PE_parse_boot_argn("onyx_touch_gpi_probe", &gpi_probe, sizeof(gpi_probe));
 	PE_parse_boot_argn("onyx_touch_gpi", &gpi, sizeof(gpi));
 	PE_parse_boot_argn("onyx_touch_bitbang", &bitbang, sizeof(bitbang));
