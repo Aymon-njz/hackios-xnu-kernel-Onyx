@@ -1353,14 +1353,12 @@ onyx_touch_gpi_run(void)
 		return;
 	}
 	/*
-	 * Stage 4 is deliberately read-only.  It proves that the SM8735 GPII-1
-	 * execution-engine window and the GPI stream's SMMU state can be observed
-	 * under XNU before we allocate a stream or alter any SMMU mapping.
+	 * GPI/SMMU register inspection itself caused an early reset on retail
+	 * Onyx firmware.  Do not probe this block as part of the staged boot path:
+	 * a later transport attempt must explicitly select stage 5.
 	 */
-	onyx_gpi_probe();
-	printf("onyx-touch: GPI checkpoint 5: Onyx GPII-1/SMMU state inspected\n");
 	if (stage < 5) {
-		printf("onyx-touch: stopping before GPI/SMMU ownership (stage %d)\n", stage);
+		printf("onyx-touch: GPI ownership withheld after safe firmware handoff (stage %d)\n", stage);
 		return;
 	}
 	printf("onyx-touch: starting native 19.2 MHz GPI transport for NT38771\n");
