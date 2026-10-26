@@ -121,25 +121,33 @@ onyx_touch_say(const char *format, ...)
 #define ONYX_NVT_SPI_HZ          19200000U
 #define ONYX_PIN_FUNCTION_SPI    1
 
-/* Tuna uses a 0x10000 EE adjustment for QUP1 GPI.  These offsets are from
- * the DT's 0xa00000 resource, after applying that adjustment to Qualcomm's
- * public GPI register layout. */
-#define GPI_CH_CONTEXT(k)        (0x10000UL + 0x80UL * (k))
-#define GPI_EV_CONTEXT           0x11000UL
-#define GPI_CH_DOORBELL(k)       (0x12000UL + 0x08UL * (k))
-#define GPI_EV_DOORBELL          0x12100UL
-#define GPI_CH_CMD               0x13008UL
-#define GPI_EV_CMD               0x13010UL
-#define GPI_IRQ_TYPE             0x13080UL
-#define GPI_IRQ_MASK             0x13088UL
-#define GPI_CH_IRQ               0x13090UL
-#define GPI_EV_IRQ               0x13094UL
-#define GPI_IEOB_IRQ             0x130b0UL
-#define GPI_GLOB_IRQ             0x13100UL
-#define GPI_GPII_IRQ             0x13118UL
-#define GPI_ERROR_LOG            0x13200UL
-#define GPI_CH_SCRATCH(k, n)     (0x10060UL + 0x80UL * (k) + 4UL * (n))
-#define GPI_CH_QOS(k)            (0x1005cUL + 0x80UL * (k))
+/*
+ * Onyx GPI1 uses the SM8735 layout from its stock msm_gpi driver.  The
+ * previous port borrowed an older device's 0x10000 execution-environment
+ * window and consequently sent commands into the wrong register bank.
+ *
+ * The live DT makes GPII 1 the first dynamically allocatable instance
+ * (gpii-mask = 0x1e; SE4 requests dynamic DMA channels).  Context arrays are
+ * at 0x20000 + 0x4000 * GPII; qcom,gpi-ee-offset is not the context base.
+ */
+#define ONYX_GPII                 1UL
+#define GPI_GPII_BASE             (0x4000UL * ONYX_GPII)
+#define GPI_CH_CONTEXT(k)         (0x20000UL + GPI_GPII_BASE + 0x80UL * (k))
+#define GPI_EV_CONTEXT            (0x21000UL + GPI_GPII_BASE)
+#define GPI_CH_DOORBELL(k)        (0x22000UL + GPI_GPII_BASE + 0x08UL * (k))
+#define GPI_EV_DOORBELL           (0x22100UL + GPI_GPII_BASE)
+#define GPI_CH_CMD                (0x23008UL + GPI_GPII_BASE)
+#define GPI_EV_CMD                (0x23010UL + GPI_GPII_BASE)
+#define GPI_IRQ_TYPE              (0x23080UL + GPI_GPII_BASE)
+#define GPI_IRQ_MASK              (0x23088UL + GPI_GPII_BASE)
+#define GPI_CH_IRQ                (0x23090UL + GPI_GPII_BASE)
+#define GPI_EV_IRQ                (0x23094UL + GPI_GPII_BASE)
+#define GPI_IEOB_IRQ              (0x230b0UL + GPI_GPII_BASE)
+#define GPI_GLOB_IRQ              (0x23100UL + GPI_GPII_BASE)
+#define GPI_GPII_IRQ              (0x23118UL + GPI_GPII_BASE)
+#define GPI_ERROR_LOG             (0x23200UL + GPI_GPII_BASE)
+#define GPI_CH_SCRATCH(k, n)      (0x20060UL + GPI_GPII_BASE + 0x80UL * (k) + 4UL * (n))
+#define GPI_CH_QOS(k)             (0x2005cUL + GPI_GPII_BASE + 0x80UL * (k))
 
 #define GPI_CONTEXT_STATE(v)     (((v) >> 20) & 0xf)
 #define GPI_CONTEXT_CONFIG(size, event, direction, protocol) \
