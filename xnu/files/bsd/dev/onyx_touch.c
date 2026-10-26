@@ -128,26 +128,30 @@ onyx_touch_say(const char *format, ...)
  *
  * The live DT makes GPII 1 the first dynamically allocatable instance
  * (gpii-mask = 0x1e; SE4 requests dynamic DMA channels).  Context arrays are
- * at 0x20000 + 0x4000 * GPII; qcom,gpi-ee-offset is not the context base.
+ * at 0x20000 + 0x4000 * GPII in the driver register specification.  Its
+ * qcom,gpi-ee-offset handling deliberately shifts the execution-engine base
+ * back by 0x10000, so the mapped GPI1 addresses below include that shift.
  */
 #define ONYX_GPII                 1UL
+#define ONYX_GPI_EE_OFFSET        0x10000UL
 #define GPI_GPII_BASE             (0x4000UL * ONYX_GPII)
-#define GPI_CH_CONTEXT(k)         (0x20000UL + GPI_GPII_BASE + 0x80UL * (k))
-#define GPI_EV_CONTEXT            (0x21000UL + GPI_GPII_BASE)
-#define GPI_CH_DOORBELL(k)        (0x22000UL + GPI_GPII_BASE + 0x08UL * (k))
-#define GPI_EV_DOORBELL           (0x22100UL + GPI_GPII_BASE)
-#define GPI_CH_CMD                (0x23008UL + GPI_GPII_BASE)
-#define GPI_EV_CMD                (0x23010UL + GPI_GPII_BASE)
-#define GPI_IRQ_TYPE              (0x23080UL + GPI_GPII_BASE)
-#define GPI_IRQ_MASK              (0x23088UL + GPI_GPII_BASE)
-#define GPI_CH_IRQ                (0x23090UL + GPI_GPII_BASE)
-#define GPI_EV_IRQ                (0x23094UL + GPI_GPII_BASE)
-#define GPI_IEOB_IRQ              (0x230b0UL + GPI_GPII_BASE)
-#define GPI_GLOB_IRQ              (0x23100UL + GPI_GPII_BASE)
-#define GPI_GPII_IRQ              (0x23118UL + GPI_GPII_BASE)
-#define GPI_ERROR_LOG             (0x23200UL + GPI_GPII_BASE)
-#define GPI_CH_SCRATCH(k, n)      (0x20060UL + GPI_GPII_BASE + 0x80UL * (k) + 4UL * (n))
-#define GPI_CH_QOS(k)             (0x2005cUL + GPI_GPII_BASE + 0x80UL * (k))
+#define GPI_EXEC(offset)          ((offset) - ONYX_GPI_EE_OFFSET + GPI_GPII_BASE)
+#define GPI_CH_CONTEXT(k)         (GPI_EXEC(0x20000UL) + 0x80UL * (k))
+#define GPI_EV_CONTEXT            GPI_EXEC(0x21000UL)
+#define GPI_CH_DOORBELL(k)        (GPI_EXEC(0x22000UL) + 0x08UL * (k))
+#define GPI_EV_DOORBELL           GPI_EXEC(0x22100UL)
+#define GPI_CH_CMD                GPI_EXEC(0x23008UL)
+#define GPI_EV_CMD                GPI_EXEC(0x23010UL)
+#define GPI_IRQ_TYPE              GPI_EXEC(0x23080UL)
+#define GPI_IRQ_MASK              GPI_EXEC(0x23088UL)
+#define GPI_CH_IRQ                GPI_EXEC(0x23090UL)
+#define GPI_EV_IRQ                GPI_EXEC(0x23094UL)
+#define GPI_IEOB_IRQ              GPI_EXEC(0x230b0UL)
+#define GPI_GLOB_IRQ              GPI_EXEC(0x23100UL)
+#define GPI_GPII_IRQ              GPI_EXEC(0x23118UL)
+#define GPI_ERROR_LOG             GPI_EXEC(0x23200UL)
+#define GPI_CH_SCRATCH(k, n)      (GPI_EXEC(0x20060UL) + 0x80UL * (k) + 4UL * (n))
+#define GPI_CH_QOS(k)             (GPI_EXEC(0x2005cUL) + 0x80UL * (k))
 
 #define GPI_CONTEXT_STATE(v)     (((v) >> 20) & 0xf)
 #define GPI_CONTEXT_CONFIG(size, event, direction, protocol) \
