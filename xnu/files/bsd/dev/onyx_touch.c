@@ -1310,7 +1310,7 @@ onyx_touch_gpi_run(void)
 	PE_parse_boot_argn("onyx_touch_gpi_skip_pins", &skip_pins, sizeof(skip_pins));
 	/* Keep the old explicit live flag as the all-stages compatibility switch. */
 	if (PE_parse_boot_argn("onyx_touch_gpi_live", &live, sizeof(live)) && live == 1) {
-		stage = 4;
+		stage = 5;
 	}
 	if (stage < 1) {
 		printf("onyx-touch: GPI live transport withheld; use onyx_touch_gpi_stage=1 after this checkpoint is retained\n");
@@ -1349,6 +1349,17 @@ onyx_touch_gpi_run(void)
 		printf("onyx-touch: GPI checkpoint 4: SPI/IRQ pins selected\n");
 	}
 	if (stage < 4) {
+		printf("onyx-touch: stopping before GPI/SMMU ownership (stage %d)\n", stage);
+		return;
+	}
+	/*
+	 * Stage 4 is deliberately read-only.  It proves that the SM8735 GPII-1
+	 * execution-engine window and the GPI stream's SMMU state can be observed
+	 * under XNU before we allocate a stream or alter any SMMU mapping.
+	 */
+	onyx_gpi_probe();
+	printf("onyx-touch: GPI checkpoint 5: Onyx GPII-1/SMMU state inspected\n");
+	if (stage < 5) {
 		printf("onyx-touch: stopping before GPI/SMMU ownership (stage %d)\n", stage);
 		return;
 	}
