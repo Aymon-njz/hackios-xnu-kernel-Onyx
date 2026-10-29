@@ -221,8 +221,17 @@ onyx_touch_say(const char *format, ...)
 #define ONYX_PIN_CS              19
 #define ONYX_PIN_IRQ             78
 #define ONYX_NVT_EVENT           0x031400U
+/*
+ * Xiaomi's actual NT38771 driver does not start by treating 0x31400 as a
+ * bare 65-byte point buffer.  Its host-poll handshake selects this window
+ * and issues a 40-byte read at offset 0x50.  That exchange was captured from
+ * the phone's live spi-msm-geni GPI trace (mode 0, 19.2 MHz, CS0).
+ */
+#define ONYX_NVT_HOST_POLL        0x031450U
+#define ONYX_NVT_HOST_POLL_BYTES  40U
 /* Novatek's 65-byte point packet plus its command byte at index zero. */
 #define ONYX_NVT_REPORT          66
+#define ONYX_NVT_GPI_MAX         4096U
 #define ONYX_NVT_MAX_TOUCHES     10
 #define ONYX_TOUCH_BRIDGE_MAGIC  0x48544354U /* "TCTH" */
 
@@ -255,6 +264,13 @@ struct onyx_gpi_tre {
 	uint32_t dword[4];
 };
 static struct onyx_gpi_state onyx_gpi_state;
+/*
+ * GPI uses a 4 KiB TX area in the coherent pool.  Keep these outside the
+ * kernel thread stack; a host-poll transaction is larger than a point report.
+ * There is a single deferred Onyx touch thread, so no transfer lock is needed.
+ */
+static uint8_t onyx_nvt_gpi_tx[ONYX_NVT_GPI_MAX];
+static uint8_t onyx_nvt_gpi_rx[ONYX_NVT_GPI_MAX];
 static struct {
 	bool down, seen;
 	uint32_t x, y;
@@ -653,7 +669,8 @@ onyx_gpi_transfer(const uint8_t *tx, uint8_t *rx, uint32_t length)
 	uint32_t divider, events = 0, required = 1;
 	uint64_t deadline;
 
-	if (!state->channels_on || length == 0 || length > 512) {
+	/* ONYX_GPI_TX_DATA_OFF..ONYX_GPI_RX_DATA_OFF is the 4 KiB TX aperture. */
+	if (!state->channels_on || length == 0 || length > ONYX_NVT_GPI_MAX) {
 		return false;
 	}
 	tx_ring = (struct onyx_gpi_tre *)(state->pool + ONYX_GPI_TX_OFF);
@@ -722,18 +739,37 @@ static bool
 onyx_nvt_gpi_read(uint32_t address, uint8_t *data, uint32_t length)
 {
 	uint8_t page[3] = { 0xff, (uint8_t)(address >> 15), (uint8_t)(address >> 7) };
-	uint8_t tx[ONYX_NVT_REPORT + 1] = { 0 }, rx[ONYX_NVT_REPORT + 1] = { 0 };
 
-	if (length > ONYX_NVT_REPORT) {
+	if (length == 0 || length >= ONYX_NVT_GPI_MAX) {
 		return false;
 	}
-	tx[0] = (uint8_t)(address & 0x7f);
+	onyx_nvt_gpi_tx[0] = (uint8_t)(address & 0x7f);
+	memset(onyx_nvt_gpi_tx + 1, 0, length);
 	if (!onyx_gpi_transfer(page, NULL, sizeof(page)) ||
-	    !onyx_gpi_transfer(tx, rx, length + 1)) {
+	    !onyx_gpi_transfer(onyx_nvt_gpi_tx, onyx_nvt_gpi_rx, length + 1)) {
 		return false;
 	}
-	data[0] = tx[0];
-	memcpy(data + 1, rx + 2, length - 1);
+	data[0] = onyx_nvt_gpi_tx[0];
+	memcpy(data + 1, onyx_nvt_gpi_rx + 2, length - 1);
+	return true;
+}
+
+/*
+ * The first native exchange must match stock before attempting the point
+ * reader.  The returned structure is vendor-specific; retain it in the log
+ * for a parser pass rather than guessing fields from a different Novatek IC.
+ */
+static bool
+onyx_nvt_gpi_host_poll(void)
+{
+	uint8_t info[ONYX_NVT_HOST_POLL_BYTES] = { 0 };
+
+	if (!onyx_nvt_gpi_read(ONYX_NVT_HOST_POLL, info, sizeof(info))) {
+		printf("onyx-touch: NT38771 host-poll read at %#x failed\n", ONYX_NVT_HOST_POLL);
+		return false;
+	}
+	printf("onyx-touch: NT38771 host-poll %02x %02x %02x %02x %02x %02x %02x %02x\n",
+	    info[1], info[2], info[3], info[4], info[5], info[6], info[7], info[8]);
 	return true;
 }
 
@@ -1363,6 +1399,9 @@ onyx_touch_gpi_run(void)
 	}
 	printf("onyx-touch: starting native 19.2 MHz GPI transport for NT38771\n");
 	if (!onyx_gpi_prepare()) {
+		return;
+	}
+	if (!onyx_nvt_gpi_host_poll()) {
 		return;
 	}
 	for (unsigned reads = 0, idle = 0;;) {
