@@ -255,7 +255,7 @@ struct onyx_touch_bridge {
 static vm_offset_t onyx_tlmm, onyx_gcc, onyx_se, onyx_gpi;
 static uint32_t onyx_fifo_depth, onyx_se_source_hz, onyx_se_clock_select;
 struct onyx_gpi_state {
-	vm_offset_t smmu, context, tables, pool;
+	vm_offset_t smmu, global1, context, tables, pool;
 	uint32_t match, context_number, old_smr, old_s2cr, old_sctlr;
 	uint32_t page, pages, tx_wp, rx_wp, event_rp, event_wp;
 	bool smmu_on, event_on, channels_on;
@@ -428,6 +428,13 @@ onyx_smmu_prepare_gpi(void)
 	contexts = idr1 & 0xff;
 	state->page = idr1 >> 31 ? 0x10000 : 0x1000;
 	state->pages = 2u << (idr1 >> 28 & 7);
+	/* CBAR/CBA2R reside in GR1, one hardware register page after GR0.
+	 * Writing their offsets against GR0 corrupts global/stream registers. */
+	state->global1 = ml_io_map(ONYX_APPS_SMMU_PHYS + state->page, 0x1000);
+	if (!state->global1) {
+		printf("onyx-touch: cannot map apps SMMU GR1\n");
+		return false;
+	}
 	state->match = UINT32_MAX;
 	for (uint32_t n = 0; n < matches && SMMU_SMR(n) < 0xc00; n++) {
 		uint32_t smr = onyx_touch_rd(state->smmu + SMMU_SMR(n));
@@ -476,8 +483,8 @@ onyx_smmu_prepare_gpi(void)
 	onyx_touch_clean(state->pool, ONYX_GPI_POOL_BYTES);
 	root_pa = kvtophys(state->tables) | (uint64_t)state->context_number << 48;
 	onyx_touch_wr(state->context + SMMU_CB_SCTLR, 0);
-	onyx_touch_wr(state->smmu + SMMU_CBA2R(state->context_number), 1);
-	onyx_touch_wr(state->smmu + SMMU_CBAR(state->context_number), 1u << 16 | 3u << 8 | 0xfu << 12);
+	onyx_touch_wr(state->global1 + SMMU_CBA2R(state->context_number), 1);
+	onyx_touch_wr(state->global1 + SMMU_CBAR(state->context_number), 1u << 16 | 3u << 8 | 0xfu << 12);
 	onyx_touch_wr(state->context + SMMU_CB_TCR2, SMMU_TCR2_VALUE);
 	onyx_touch_wr(state->context + SMMU_CB_TCR, SMMU_TCR_39_BITS);
 	onyx_touch_wr(state->context + SMMU_CB_TTBR0, (uint32_t)root_pa);
@@ -542,6 +549,7 @@ onyx_gpi_prepare(void)
 	    (unsigned)ONYX_GPII, (unsigned long)(ONYX_GPI1_PHYS + GPI_EV_CMD),
 	    (unsigned long)(ONYX_GPI1_PHYS + GPI_EV_CONTEXT));
 	onyx_touch_wr(onyx_gpi + GPI_EV_CMD, GPI_EV_CMD_VALUE(GPI_EV_ALLOCATE));
+	__asm__ volatile ("dsb sy" ::: "memory");
 	printf("onyx-touch: GPI event allocate command returned\n");
 	if (!onyx_gpi_wait(event, 1)) {
 		printf("onyx-touch: GPI event-ring allocation timed out (ctx %#x err %#x)\n",
