@@ -560,6 +560,13 @@ onyx_gpi_prepare(void)
 	onyx_touch_wr(event + 4, ONYX_GPI_EVENT_LEN);
 	onyx_touch_wr(event + 8, (uint32_t)event_iova);
 	onyx_touch_wr(event + 12, (uint32_t)(event_iova >> 32));
+	/* Match the stock event-ring context, including disabling stale MSI
+	 * and read-pointer writeback addresses left by earlier firmware users. */
+	onyx_touch_wr(event + 0x20, 0);
+	onyx_touch_wr(event + 0x28, 0);
+	onyx_touch_wr(event + 0x2c, 0);
+	onyx_touch_wr(event + 0x30, 0);
+	onyx_touch_wr(event + 0x34, 0);
 	onyx_touch_wr(onyx_gpi + GPI_EV_DOORBELL + 4, (uint32_t)(event_iova >> 32));
 	onyx_touch_wr(onyx_gpi + GPI_EV_DOORBELL, (uint32_t)(event_iova + ONYX_GPI_EVENT_LEN - ONYX_GPI_TRE_BYTES));
 	state->event_rp = 0;
@@ -587,6 +594,11 @@ onyx_gpi_prepare(void)
 		onyx_touch_wr(onyx_gpi + GPI_CH_SCRATCH(ch, 2), 0);
 		onyx_touch_wr(onyx_gpi + GPI_CH_SCRATCH(ch, 3), 0);
 		onyx_touch_wr(onyx_gpi + GPI_CH_QOS(ch), 1);
+	}
+	/* TX scratch names RX as its paired channel.  Allocate and configure
+	 * both contexts before starting either, as the stock client does. */
+	for (unsigned ch = 0; ch < 2; ch++) {
+		channel = onyx_gpi + GPI_CH_CONTEXT(ch);
 		__asm__ volatile ("dsb sy" ::: "memory");
 		onyx_touch_wr(onyx_gpi + GPI_CH_CMD, GPI_CH_CMD_VALUE(GPI_CH_START, ch));
 		if (!onyx_gpi_wait(channel, 2)) {
