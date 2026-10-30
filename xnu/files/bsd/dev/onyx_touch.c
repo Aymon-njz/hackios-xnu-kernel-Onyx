@@ -578,7 +578,11 @@ onyx_gpi_prepare(void)
 		uint32_t direction = ch == 0 ? 1 : 0;
 
 		channel = onyx_gpi + GPI_CH_CONTEXT(ch);
+		printf("onyx-touch: paired-v2 allocating channel %u at PA %#lx\n",
+		    ch, (unsigned long)(ONYX_GPI1_PHYS + GPI_CH_CONTEXT(ch)));
 		onyx_touch_wr(onyx_gpi + GPI_CH_CMD, GPI_CH_CMD_VALUE(GPI_CH_ALLOCATE, ch));
+		__asm__ volatile ("dsb sy" ::: "memory");
+		printf("onyx-touch: paired-v2 channel %u allocate command returned\n", ch);
 		if (!onyx_gpi_wait(channel, 1)) {
 			printf("onyx-touch: GPI channel %u allocation timed out (ctx %#x err %#x)\n",
 			    ch, onyx_touch_rd(channel), onyx_touch_rd(onyx_gpi + GPI_ERROR_LOG));
@@ -594,13 +598,17 @@ onyx_gpi_prepare(void)
 		onyx_touch_wr(onyx_gpi + GPI_CH_SCRATCH(ch, 2), 0);
 		onyx_touch_wr(onyx_gpi + GPI_CH_SCRATCH(ch, 3), 0);
 		onyx_touch_wr(onyx_gpi + GPI_CH_QOS(ch), 1);
+		printf("onyx-touch: paired-v2 channel %u configured\n", ch);
 	}
 	/* TX scratch names RX as its paired channel.  Allocate and configure
 	 * both contexts before starting either, as the stock client does. */
 	for (unsigned ch = 0; ch < 2; ch++) {
 		channel = onyx_gpi + GPI_CH_CONTEXT(ch);
+		printf("onyx-touch: paired-v2 starting channel %u\n", ch);
 		__asm__ volatile ("dsb sy" ::: "memory");
 		onyx_touch_wr(onyx_gpi + GPI_CH_CMD, GPI_CH_CMD_VALUE(GPI_CH_START, ch));
+		__asm__ volatile ("dsb sy" ::: "memory");
+		printf("onyx-touch: paired-v2 channel %u start command returned\n", ch);
 		if (!onyx_gpi_wait(channel, 2)) {
 			printf("onyx-touch: GPI channel %u start timed out (ctx %#x err %#x)\n",
 			    ch, onyx_touch_rd(channel), onyx_touch_rd(onyx_gpi + GPI_ERROR_LOG));
@@ -1461,6 +1469,7 @@ onyx_touch_probe_thread(__unused void *parameter, __unused wait_result_t result)
 
 	/* Avoid early platform bring-up: this runs after bsd_init has released its thread. */
 	delay_for_interval(5, NSEC_PER_SEC);
+	printf("onyx-touch: build paired-v2-20261030; GR1 and paired-channel setup\n");
 	/*
 	 * The normal probe remains passive.  A second-stage argument is required
 	 * before this thread maps even the read-only controller registers.
