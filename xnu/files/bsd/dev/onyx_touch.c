@@ -538,7 +538,11 @@ onyx_gpi_prepare(void)
 	}
 	/* The vendor driver allocates first, then programs each context. */
 	event = onyx_gpi + GPI_EV_CONTEXT;
+	printf("onyx-touch: allocating GPII %u event ring: command PA %#lx context PA %#lx\n",
+	    (unsigned)ONYX_GPII, (unsigned long)(ONYX_GPI1_PHYS + GPI_EV_CMD),
+	    (unsigned long)(ONYX_GPI1_PHYS + GPI_EV_CONTEXT));
 	onyx_touch_wr(onyx_gpi + GPI_EV_CMD, GPI_EV_CMD_VALUE(GPI_EV_ALLOCATE));
+	printf("onyx-touch: GPI event allocate command returned\n");
 	if (!onyx_gpi_wait(event, 1)) {
 		printf("onyx-touch: GPI event-ring allocation timed out (ctx %#x err %#x)\n",
 		    onyx_touch_rd(event), onyx_touch_rd(onyx_gpi + GPI_ERROR_LOG));
@@ -553,6 +557,7 @@ onyx_gpi_prepare(void)
 	state->event_rp = 0;
 	state->event_wp = ONYX_GPI_EVENT_LEN - ONYX_GPI_TRE_BYTES;
 	state->event_on = true;
+	printf("onyx-touch: GPI event ring configured\n");
 	for (unsigned ch = 0; ch < 2; ch++) {
 		uint64_t iova = ONYX_GPI_IOVA + (ch == 0 ? ONYX_GPI_TX_OFF : ONYX_GPI_RX_OFF);
 		uint32_t direction = ch == 0 ? 1 : 0;
