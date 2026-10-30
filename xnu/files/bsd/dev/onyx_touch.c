@@ -1221,6 +1221,29 @@ onyx_nvt_read(uint32_t address, uint8_t *data, uint32_t length)
 static void
 onyx_touch_report(const uint8_t *report)
 {
+	/* Validate the whole snapshot before posting any event.  A torn SPI
+	 * frame must not clamp bogus coordinates to the edge or release contacts
+	 * after half a snapshot has already been delivered to backboardd.
+	 * This follows the frame-validation approach used by Bergamota's Novatek
+	 * port; Onyx retains its own SPI transport and panel geometry. */
+	uint32_t ids = 0;
+	for (unsigned slot = 0; slot < ONYX_NVT_MAX_TOUCHES; slot++) {
+		const uint8_t *p = report + 1 + slot * 6;
+		unsigned event = p[0] & 7, id = p[0] >> 3;
+		if (p[0] == 0 || p[0] == 0xff) {
+			continue;
+		}
+		if (id == 0 || id > ONYX_NVT_MAX_TOUCHES ||
+		    (event != 1 && event != 2 && event != 3) ||
+		    (ids & (1u << (id - 1)))) {
+			return;
+		}
+		ids |= 1u << (id - 1);
+		if (event != 3 && ((((uint32_t)p[1] << 4) | (p[3] >> 4)) >= 1280 ||
+		    (((uint32_t)p[2] << 4) | (p[3] & 0xf)) >= 2772)) {
+			return;
+		}
+	}
 	for (unsigned id = 0; id < ONYX_NVT_MAX_TOUCHES; id++) {
 		onyx_contact[id].seen = false;
 	}
@@ -1235,8 +1258,8 @@ onyx_touch_report(const uint8_t *report)
 		/* NT36xxx SPI point data: X high, Y high, then both low nibbles. */
 		x = ((uint32_t)p[1] << 4) | (p[3] >> 4);
 		y = ((uint32_t)p[2] << 4) | (p[3] & 0xf);
-		x = x >= 1280 ? 65535 : x * 65535 / 1280;
-		y = y >= 2772 ? 65535 : y * 65535 / 2772;
+		x = x * 65535 / 1279;
+		y = y * 65535 / 2771;
 		onyx_contact[id].seen = true;
 		if (!onyx_contact[id].down) {
 			redwood_touch_post(REDWOOD_TOUCH_DOWN, id, x, y);
