@@ -763,8 +763,17 @@ onyx_gpi_transfer(const uint8_t *tx, uint8_t *rx, uint32_t length)
 	__asm__ volatile ("dsb sy" ::: "memory");
 	printf("onyx-touch: SPI DMA submitted %u bytes, receive %u, TX cursor %#x RX cursor %#x\n",
 	    length, rx != NULL, state->tx_wp, state->rx_wp);
+	printf("onyx-touch: DMA completion probe begins; SMMU context %u\n", state->context_number);
 	clock_interval_to_deadline(200, NSEC_PER_MSEC, &deadline);
 	while (mach_absolute_time() < deadline) {
+		uint32_t fault = onyx_touch_rd(state->context + SMMU_CB_FSR);
+		if (fault & SMMU_FSR_ALL) {
+			printf("onyx-touch: DMA translation fault FSR %#x FAR %08x:%08x syndrome %#x; transfer stopped\n",
+			    fault, onyx_touch_rd(state->context + SMMU_CB_FAR + 4),
+			    onyx_touch_rd(state->context + SMMU_CB_FAR),
+			    onyx_touch_rd(state->context + SMMU_CB_FSYNR0));
+			return false;
+		}
 		if (onyx_gpi_reap_event(state, &events) && events >= required) {
 			if (rx) {
 				onyx_touch_clean((vm_offset_t)rx_data, length);
