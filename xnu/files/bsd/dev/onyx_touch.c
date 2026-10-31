@@ -671,8 +671,17 @@ onyx_gpi_reap_event(struct onyx_gpi_state *state, uint32_t *events)
 	struct onyx_gpi_tre *event_ring = (struct onyx_gpi_tre *)(state->pool + ONYX_GPI_EVENT_OFF);
 	uint32_t hardware_rp = onyx_touch_rd(onyx_gpi + GPI_EV_CONTEXT + 0x10);
 	uint32_t base = (uint32_t)(ONYX_GPI_IOVA + ONYX_GPI_EVENT_OFF);
+	unsigned budget = ONYX_GPI_EVENT_LEN / ONYX_GPI_TRE_BYTES;
 
 	while (hardware_rp != base + state->event_rp) {
+		/* A bad DMA pointer must not trap this thread in a non-terminating
+		 * loop: the transfer deadline is checked by our caller. */
+		if (hardware_rp < base || hardware_rp >= base + ONYX_GPI_EVENT_LEN ||
+		    (hardware_rp - base) % ONYX_GPI_TRE_BYTES != 0 || budget-- == 0) {
+			printf("onyx-touch: invalid GPI event cursor %#x (base %#x software %#x)\n",
+			    hardware_rp, base, state->event_rp);
+			return false;
+		}
 		struct onyx_gpi_tre *event = &event_ring[state->event_rp / ONYX_GPI_TRE_BYTES];
 		uint32_t type = event->dword[3] >> 16 & 0xff;
 
@@ -740,6 +749,7 @@ onyx_gpi_transfer(const uint8_t *tx, uint8_t *rx, uint32_t length)
 	onyx_gpi_put_tre(tx_ring, &state->tx_wp, &dma);
 	onyx_touch_clean(state->pool + ONYX_GPI_TX_OFF, ONYX_GPI_RING_LEN);
 	if (rx) {
+		onyx_touch_clean((vm_offset_t)rx_data, length);
 		onyx_touch_clean(state->pool + ONYX_GPI_RX_OFF, ONYX_GPI_RING_LEN);
 	}
 	onyx_touch_clean((vm_offset_t)tx_data, length);
@@ -750,6 +760,9 @@ onyx_gpi_transfer(const uint8_t *tx, uint8_t *rx, uint32_t length)
 	}
 	onyx_touch_wr(onyx_gpi + GPI_CH_DOORBELL(0),
 	    (uint32_t)(ONYX_GPI_IOVA + ONYX_GPI_TX_OFF + state->tx_wp));
+	__asm__ volatile ("dsb sy" ::: "memory");
+	printf("onyx-touch: SPI DMA submitted %u bytes, receive %u, TX cursor %#x RX cursor %#x\n",
+	    length, rx != NULL, state->tx_wp, state->rx_wp);
 	clock_interval_to_deadline(200, NSEC_PER_MSEC, &deadline);
 	while (mach_absolute_time() < deadline) {
 		if (onyx_gpi_reap_event(state, &events) && events >= required) {
