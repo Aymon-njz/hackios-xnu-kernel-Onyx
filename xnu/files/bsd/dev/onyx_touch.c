@@ -479,6 +479,27 @@ onyx_smmu_prepare_gpi(void)
 	for (uint32_t offset = 0; offset < ONYX_GPI_POOL_BYTES; offset += 4096) {
 		third[((ONYX_GPI_IOVA + offset) >> 12) & 0x1ff] = kvtophys(state->pool + offset) | SMMU_PTE;
 	}
+	/* TCR2.PASIZE=1 permits 36-bit physical output addresses.  Validate
+	 * all table/data pages before enabling translation or submitting DMA. */
+	for (unsigned level = 0; level < 3; level++) {
+		uint64_t pa = kvtophys(state->tables + level * 4096);
+		if ((pa & 4095) || pa >= (1ULL << 36)) {
+			printf("onyx-touch: SMMU table %u PA %#llx exceeds configured geometry\n", level, pa);
+			return false;
+		}
+	}
+	for (uint32_t offset = 0; offset < ONYX_GPI_POOL_BYTES; offset += 4096) {
+		uint64_t pa = kvtophys(state->pool + offset);
+		uint64_t descriptor = third[((ONYX_GPI_IOVA + offset) >> 12) & 0x1ff];
+		if ((pa & 4095) || pa >= (1ULL << 36) ||
+		    descriptor != (pa | SMMU_PTE)) {
+			printf("onyx-touch: DMA map invalid IOVA %#llx PA %#llx PTE %#llx\n",
+			    ONYX_GPI_IOVA + offset, pa, descriptor);
+			return false;
+		}
+	}
+	printf("onyx-touch: DMA map validated: IOVA %#llx length %#x pool PA %#llx tables PA %#llx\n",
+	    ONYX_GPI_IOVA, ONYX_GPI_POOL_BYTES, kvtophys(state->pool), kvtophys(state->tables));
 	onyx_touch_clean(state->tables, 3 * 4096);
 	onyx_touch_clean(state->pool, ONYX_GPI_POOL_BYTES);
 	root_pa = kvtophys(state->tables) | (uint64_t)state->context_number << 48;
