@@ -258,7 +258,7 @@ struct onyx_gpi_state {
 	vm_offset_t smmu, global1, context, tables, pool;
 	uint32_t match, context_number, old_smr, old_s2cr, old_sctlr;
 	uint32_t page, pages, tx_wp, rx_wp, event_rp, event_wp;
-	bool smmu_on, event_on, channels_on;
+	bool smmu_on, event_on, channels_on, transfer_failed;
 };
 struct onyx_gpi_tre {
 	uint32_t dword[4];
@@ -701,9 +701,13 @@ onyx_gpi_reap_event(struct onyx_gpi_state *state, uint32_t *events)
 		    (hardware_rp - base) % ONYX_GPI_TRE_BYTES != 0 || budget-- == 0) {
 			printf("onyx-touch: invalid GPI event cursor %#x (base %#x software %#x)\n",
 			    hardware_rp, base, state->event_rp);
+			state->transfer_failed = true;
 			return false;
 		}
 		struct onyx_gpi_tre *event = &event_ring[state->event_rp / ONYX_GPI_TRE_BYTES];
+		/* The ring is ordinary cached kernel RAM.  DMA owns these entries
+		 * until the producer advances; invalidate before decoding them. */
+		onyx_touch_clean((vm_offset_t)event, sizeof(*event));
 		uint32_t type = event->dword[3] >> 16 & 0xff;
 
 		if (type == ONYX_GPI_EVENT_COMPLETE) {
@@ -711,6 +715,8 @@ onyx_gpi_reap_event(struct onyx_gpi_state *state, uint32_t *events)
 		} else {
 			printf("onyx-touch: GPI event type %#x (%08x %08x %08x %08x)\n", type,
 			    event->dword[0], event->dword[1], event->dword[2], event->dword[3]);
+			state->transfer_failed = true;
+			return false;
 		}
 		state->event_rp = onyx_gpi_advance(state->event_rp, ONYX_GPI_TRE_BYTES, ONYX_GPI_EVENT_LEN);
 		state->event_wp = onyx_gpi_advance(state->event_wp, ONYX_GPI_TRE_BYTES, ONYX_GPI_EVENT_LEN);
@@ -733,7 +739,7 @@ onyx_gpi_transfer(const uint8_t *tx, uint8_t *rx, uint32_t length)
 	uint64_t deadline;
 
 	/* ONYX_GPI_TX_DATA_OFF..ONYX_GPI_RX_DATA_OFF is the 4 KiB TX aperture. */
-	if (!state->channels_on || length == 0 || length > ONYX_NVT_GPI_MAX) {
+	if (!state->channels_on || state->transfer_failed || length == 0 || length > ONYX_NVT_GPI_MAX) {
 		return false;
 	}
 	tx_ring = (struct onyx_gpi_tre *)(state->pool + ONYX_GPI_TX_OFF);
@@ -793,6 +799,7 @@ onyx_gpi_transfer(const uint8_t *tx, uint8_t *rx, uint32_t length)
 			    fault, onyx_touch_rd(state->context + SMMU_CB_FAR + 4),
 			    onyx_touch_rd(state->context + SMMU_CB_FAR),
 			    onyx_touch_rd(state->context + SMMU_CB_FSYNR0));
+			state->transfer_failed = true;
 			return false;
 		}
 		if (onyx_gpi_reap_event(state, &events) && events >= required) {
@@ -802,12 +809,17 @@ onyx_gpi_transfer(const uint8_t *tx, uint8_t *rx, uint32_t length)
 			}
 			return true;
 		}
+		if (state->transfer_failed) {
+			printf("onyx-touch: transport disabled after invalid completion; no retry\n");
+			return false;
+		}
 		delay_for_interval(100, NSEC_PER_USEC);
 	}
 	printf("onyx-touch: GPI SPI transfer timed out (events %u/%u, tx-rp %#x rx-rp %#x err %#x)\n",
 	    events, required, onyx_touch_rd(onyx_gpi + GPI_CH_CONTEXT(0) + 0x10),
 	    onyx_touch_rd(onyx_gpi + GPI_CH_CONTEXT(1) + 0x10),
 	    onyx_touch_rd(onyx_gpi + GPI_ERROR_LOG));
+	state->transfer_failed = true;
 	return false;
 }
 
