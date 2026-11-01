@@ -735,7 +735,7 @@ onyx_gpi_transfer(const uint8_t *tx, uint8_t *rx, uint32_t length)
 	struct onyx_gpi_tre config = { { 0 } }, go = { { 0 } }, dma = { { 0 } };
 	struct onyx_gpi_tre *tx_ring, *rx_ring;
 	uint8_t *tx_data, *rx_data;
-	uint32_t divider, events = 0, required = 1;
+	uint32_t divider, events = 0, required = 1, spi_hz = ONYX_NVT_SPI_HZ;
 	uint64_t deadline;
 
 	/* ONYX_GPI_TX_DATA_OFF..ONYX_GPI_RX_DATA_OFF is the 4 KiB TX aperture. */
@@ -749,7 +749,16 @@ onyx_gpi_transfer(const uint8_t *tx, uint8_t *rx, uint32_t length)
 	memcpy(tx_data, tx, length);
 	memset(rx_data, 0, length);
 	/* The active Novatek node in the recovery FDT caps SPI at 19.2 MHz. */
-	divider = (onyx_se_source_hz + ONYX_NVT_SPI_HZ - 1) / ONYX_NVT_SPI_HZ;
+	PE_parse_boot_argn("onyx_touch_spi_hz", &spi_hz, sizeof(spi_hz));
+	if (spi_hz < 100000 || spi_hz > ONYX_NVT_SPI_HZ || onyx_se_source_hz == 0) {
+		printf("onyx-touch: invalid SPI clock request %u source %u\n", spi_hz, onyx_se_source_hz);
+		return false;
+	}
+	divider = (onyx_se_source_hz + spi_hz - 1) / spi_hz;
+	if (divider > 4095) {
+		printf("onyx-touch: SPI divider %u exceeds hardware field\n", divider);
+		return false;
+	}
 	if (divider == 0) {
 		divider = 1;
 	}
@@ -1542,12 +1551,15 @@ static void
 onyx_touch_probe_thread(__unused void *parameter, __unused wait_result_t result)
 {
 	int mmio = 0, run = 0, geni = 0, gpi_probe = 0, gpi = 0, bitbang = 0;
+	unsigned start_delay = 5;
 	uint64_t bridge_pa = 0;
 	vm_offset_t tlmm, se;
 
 	/* Avoid early platform bring-up: this runs after bsd_init has released its thread. */
-	delay_for_interval(5, NSEC_PER_SEC);
-	printf("onyx-touch: build paired-v2-20261030; GR1 and paired-channel setup\n");
+	PE_parse_boot_argn("onyx_touch_delay", &start_delay, sizeof(start_delay));
+	if (start_delay > 120) start_delay = 120;
+	delay_for_interval(start_delay, NSEC_PER_SEC);
+	printf("onyx-touch: build deferred-spi-20261101; start delay %u seconds\n", start_delay);
 	/*
 	 * The normal probe remains passive.  A second-stage argument is required
 	 * before this thread maps even the read-only controller registers.
