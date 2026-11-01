@@ -1,0 +1,70 @@
+name: Build upstream Onyx XNU kernel
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/onyx-kernel.yml'
+      - 'xnu/**'
+      - 'xnu-deps/**'
+      - 'xnu-build.sh'
+      - 'xnu-env.sh'
+
+jobs:
+  kernel:
+    runs-on: ubuntu-24.04
+    env:
+      THEOS: ${{ github.workspace }}/.theos
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XNU build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential git curl clang lld python3 perl xz-utils \
+            flex bison m4 autoconf automake libtinfo6 uuid-dev
+
+      - name: Install the Linux iOS toolchain and SDK
+        env:
+          # The Theos SDK installer queries api.github.com.  Supplying the
+          # Actions token avoids anonymous API throttling on hosted runners.
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          for attempt in 1 2 3; do
+            if CI=1 bash -c "$(curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-theos)"; then
+              break
+            fi
+            if [ "$attempt" = 3 ]; then
+              exit 1
+            fi
+            sleep "$((attempt * 5))"
+          done
+          find "$THEOS/sdks" -maxdepth 1 -type d -name 'iPhoneOS*.sdk' -print -quit | grep -q .
+
+      - name: Fetch and patch XNU
+        run: |
+          python3 tools/hakios-config.py defconfig onyx
+          python3 tools/hakios-config.py check
+          ./xnu/apply.sh
+          ./xnu-deps/setup.sh || { cat xnu-deps/exporthdrs.log; exit 1; }
+
+      - name: Build the patched ARM64 kernel
+        run: |
+          kernel=xnu-src/xnu-8796.121.2/BUILD/obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837
+          ./xnu-build.sh -j"$(nproc)" -k || test -f "$kernel" -o -f "$kernel.unstripped"
+          test -f "$kernel" || cp "$kernel.unstripped" "$kernel"
+
+      - name: Verify the upstream Onyx touch driver is present
+        run: |
+          kernel=xnu-src/xnu-8796.121.2/BUILD/obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837
+          test -s "$kernel"
+          strings -a "$kernel" | grep -F 'build deferred-spi-20261101' >/dev/null
+          sha256sum "$kernel"
+
+      - name: Publish the Onyx kernel
+        uses: actions/upload-artifact@v4
+        with:
+          name: onyx-xnu-kernel
+          path: xnu-src/xnu-8796.121.2/BUILD/obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837
+          if-no-files-found: error
+
