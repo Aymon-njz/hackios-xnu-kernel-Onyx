@@ -1781,6 +1781,12 @@ SYSCTL_PROC(_kern, OID_AUTO, hakios_switch_root, CTLTYPE_STRING | CTLFLAG_RW | C
     NULL, 0, hakios_sysctl_switch_root, "A",
     "write \"INCOMING OUTGOING\": the volume on INCOMING becomes the root (process 1, once)");
 
+/* Existing Onyx boot ramdisks predate the upstream interface rename.
+ * Share the handler and its PID-1/once-only checks with the current name. */
+SYSCTL_PROC(_kern, OID_AUTO, redwood_switch_root, CTLTYPE_STRING | CTLFLAG_RW | CTLFLAG_LOCKED,
+    NULL, 0, hakios_sysctl_switch_root, "A",
+    "compatibility name for kern.hakios_switch_root");
+
 /*
  * apfs_volume=DEV: a volume for user space in an ordinary boot.  Mounted read only (and
  * nosuid, nodev) on apfs_volume_at -- by default /System/Volumes/Darwin, which the system image
