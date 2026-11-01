@@ -1215,8 +1215,10 @@ ufshc_probe(const struct ufshc_loader *loader, bool only)
 		no = "no device present or the transfer list not ready";
 	} else if ((rsr & 1) == 0) {
 		no = "the transfer list is not running";
-	} else if (ver < 0x200 || ver >= 0x400) {
-		no = "a controller version other than 2.x or 3.x";
+	/* Onyx's proven port uses this legacy transfer-list subset on UFSHCI
+	 * 4.0. Preserve the existing controller readiness and capability gates. */
+	} else if (ver < 0x200 || ver >= 0x500) {
+		no = "a controller version other than 2.x, 3.x, or 4.x";
 	} else if (CAP_NUTRS(cap) < SLOTS) {
 		no = "fewer than 32 slots";
 	} else if ((cap & CAP_64AS) == 0) {
