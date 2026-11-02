@@ -36,3 +36,32 @@ activity beyond 150 seconds). No panic text was found in the verified capture.
 The user's subsequent report of a reboot is not explained by this snapshot;
 there is no evidence of an immediate fault at an RPMh probe read. Metal and
 GPU execution remained unavailable throughout the run.
+
+## Command-detail follow-up
+
+Build 41472232537 (`340964e`), identity `tcs-command-41472232537`, produced
+native snapshot 8: 556100 bytes, CRCs verified, no wrap/capacity flags.
+The read-only inventory finished at approximately 49 seconds and logging
+continued after 104 seconds.
+
+TCS 0 command 0:
+
+| Field | Readback |
+| --- | --- |
+| Message ID | `0x10108` |
+| Resource | `0x40f08` |
+| Data | `7` |
+| Command status | `0x10101` |
+
+The recovery command DB names base `0x40f00` as `ldob5`. Stock
+`rpmh-regulator.c` defines VRM mode register index 2, with register address
+`base + 4 * index`. Therefore this request targets ldob5 mode, not the ARC
+CX/MX/GFX level resources. Stock `rpmh-rsc.c` defines command issued as bit 8
+and complete as bit 16; both are set here. The enabled bit and trigger remain
+set despite this completion evidence. Treating every enabled command as a
+currently in-flight request is too coarse, but the result does not authorize
+clearing firmware state or establish ownership of slots 1/2. Preserve slot 0.
+
+No voltage votes were sent. Device remains in OrangeFox after restoring the
+original Android boot image for journal collection. Local full capture:
+`out/logs/tcs-command-41472232537/`.
