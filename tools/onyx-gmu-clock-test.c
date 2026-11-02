@@ -32,28 +32,33 @@ int main(void)
 {
 	static struct fake f;
 	struct onyx_rsc_io io = { &f, rd, wr, pause_us, 1, 0 };
+	struct onyx_clock_trace trace;
 	reset(&f);
-	assert(onyx_gen8_clocks_tcxo(&io) == ONYX_CLOCK_OK);
+	assert(onyx_gen8_clocks_tcxo(&io, &trace) == ONYX_CLOCK_OK);
 	assert(f.r[0x931c / 4] == 0x100001 && f.r[0x93f0 / 4] == 0x100001);
 	assert((f.r[0x9318 / 4] & 0x80000003u) == 2);
 	assert(f.r[0x90d4 / 4] == 1 && f.r[0x90e8 / 4] == 1);
 	reset(&f); f.r[0x9080 / 4] = 0x22f801;
-	assert(onyx_gen8_clocks_tcxo(&io) == ONYX_CLOCK_CX_OFF && !f.writes);
+	assert(onyx_gen8_clocks_tcxo(&io, &trace) == ONYX_CLOCK_CX_OFF && !f.writes);
 	reset(&f); io.owned = 0;
-	assert(onyx_gen8_clocks_tcxo(&io) == ONYX_CLOCK_ARGUMENT && !f.writes);
+	assert(onyx_gen8_clocks_tcxo(&io, &trace) == ONYX_CLOCK_ARGUMENT && !f.writes);
 	io.owned = 1; f.r[0x9318 / 4] |= 1;
-	assert(onyx_gen8_clocks_tcxo(&io) == ONYX_CLOCK_ARGUMENT && !f.writes);
+	assert(onyx_gen8_clocks_tcxo(&io, &trace) == ONYX_CLOCK_ARGUMENT && !f.writes);
 	reset(&f); f.reject = 0x93f0;
-	assert(onyx_gen8_clocks_tcxo(&io) == ONYX_CLOCK_READBACK && io.quarantined);
+	assert(onyx_gen8_clocks_tcxo(&io, &trace) == ONYX_CLOCK_READBACK && io.quarantined);
 	assert(f.r[0x93f0 / 4] == 0x100000);
+	assert(trace.phase == 1 && trace.offset == 0x93f0 && trace.mask == 0x71f &&
+	    trace.expected == 1 && trace.observed == 0x100000);
 	reset(&f); io.quarantined = 0; f.stuck = 0x9318;
-	assert(onyx_gen8_clocks_tcxo(&io) == ONYX_CLOCK_TIMEOUT && io.quarantined);
+	assert(onyx_gen8_clocks_tcxo(&io, &trace) == ONYX_CLOCK_TIMEOUT && io.quarantined);
 	assert(f.r[0x931c / 4] == 0x100000 && f.r[0x93f0 / 4] == 0x100000);
+	assert(trace.phase == 2 && trace.offset == 0x9318 && trace.observed & 1);
 	reset(&f); io.quarantined = 0; f.stuck = 0x90d4;
-	assert(onyx_gen8_clocks_tcxo(&io) == ONYX_CLOCK_TIMEOUT && io.quarantined);
+	assert(onyx_gen8_clocks_tcxo(&io, &trace) == ONYX_CLOCK_TIMEOUT && io.quarantined);
 	assert(!(f.r[0x90d4 / 4] & 1) && !(f.r[0x90e8 / 4] & 1));
 	assert(f.r[0x931c / 4] == 0x100000 && f.r[0x93f0 / 4] == 0x100000);
+	assert(trace.phase == 4 && trace.offset == 0x90d4 && trace.observed & 0x80000000u);
 	unsigned writes = f.writes;
-	assert(onyx_gen8_clocks_tcxo(&io) == ONYX_CLOCK_ARGUMENT && f.writes == writes);
+	assert(onyx_gen8_clocks_tcxo(&io, &trace) == ONYX_CLOCK_ARGUMENT && f.writes == writes);
 	puts("GMU TCXO clocks: success, CX/ownership gates, update busy, rejected config, root/branch timeouts and rollback passed");
 }

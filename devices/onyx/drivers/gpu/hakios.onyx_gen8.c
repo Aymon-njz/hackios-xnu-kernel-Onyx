@@ -103,7 +103,10 @@ static void onyx_gen8_power_test(unsigned stage)
 	    (unsigned)result, saved, gio.read(gio.context, 0x9080));
 	if (stage >= 6 && result == ONYX_CX_OK) {
 		printf("onyx-gen8: before GMU/HUB TCXO clock setup; no firmware start\n");
-		enum onyx_clock_result clock_result = onyx_gen8_clocks_tcxo(&gio);
+		struct onyx_clock_trace trace;
+		enum onyx_clock_result clock_result = onyx_gen8_clocks_tcxo(&gio, &trace);
+		printf("onyx-gen8: clock check phase %u offset %#x mask %#x expected %#x observed %#x (before rollback)\n",
+		    trace.phase, trace.offset, trace.mask, trace.expected, trace.observed);
 		printf("onyx-gen8: GMU/HUB clock result %u quarantined %u\n", (unsigned)clock_result, gio.quarantined);
 		static const uint32_t offsets[] = { 0x9318, 0x931c, 0x93ec, 0x93f0, 0x90d4, 0x90e4, 0x90e8, 0x90bc };
 		for (unsigned n = 0; n < sizeof(offsets) / sizeof(offsets[0]); n++)

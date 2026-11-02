@@ -10,7 +10,7 @@ static int clock_wait(struct onyx_rsc_io *io, uint32_t at, uint32_t mask, uint32
 }
 
 enum onyx_clock_result
-onyx_gen8_clocks_tcxo(struct onyx_rsc_io *io)
+onyx_gen8_clocks_tcxo(struct onyx_rsc_io *io, struct onyx_clock_trace *trace)
 {
 	/* Tuna gpucc-tuna.c and clk-rcg2.c: source 0 is TCXO, HID divider
 	 * encodes 2*div-1. CMD root-enable=bit1, update=bit0, root-off=bit31. */
@@ -19,6 +19,9 @@ onyx_gen8_clocks_tcxo(struct onyx_rsc_io *io)
 	uint32_t old_cmd[2], old_cfg[2], old_branch[6];
 	unsigned roots_touched = 0, branches_touched = 0;
 	enum onyx_clock_result result = ONYX_CLOCK_READBACK;
+	struct onyx_clock_trace local = {0, 0, 0, 0, 0};
+	if (!trace) trace = &local;
+	*trace = local;
 	if (!io || !io->read || !io->write || !io->delay_us || !io->owned || io->quarantined)
 		return ONYX_CLOCK_ARGUMENT;
 	if ((io->read(io->context, 0x9080) & 0x80000001u) != 0x80000000u)
@@ -34,20 +37,28 @@ onyx_gen8_clocks_tcxo(struct onyx_rsc_io *io)
 		roots_touched = n + 1;
 		io->write(io->context, roots[n], (old_cmd[n] & ~1u) | 2u);
 		io->write(io->context, roots[n] + 4, config);
-		if ((io->read(io->context, roots[n] + 4) & 0x71f) != 1) goto rollback;
+		*trace = (struct onyx_clock_trace){1, roots[n] + 4, 0x71f, 1,
+		    io->read(io->context, roots[n] + 4)};
+		if ((trace->observed & trace->mask) != trace->expected) goto rollback;
 		io->write(io->context, roots[n], io->read(io->context, roots[n]) | 3u);
 		if (!clock_wait(io, roots[n], 1u | (1u << 31), 0)) {
+			*trace = (struct onyx_clock_trace){2, roots[n], 0x80000001u, 0,
+			    io->read(io->context, roots[n])};
 			result = ONYX_CLOCK_TIMEOUT; goto rollback;
 		}
 	}
 	for (unsigned n = 0; n < 6; n++) {
 		branches_touched = n + 1;
 		io->write(io->context, branches[n], old_branch[n] | 1u);
-		if (!(io->read(io->context, branches[n]) & 1)) goto rollback;
+		*trace = (struct onyx_clock_trace){3, branches[n], 1, 1,
+		    io->read(io->context, branches[n])};
+		if (!(trace->observed & 1)) goto rollback;
 		/* Tuna AHB uses BRANCH_HALT_DELAY. Other branches have bit31
 		 * status, including always-on controls; do not treat vote=running. */
 		if (branches[n] == 0x90bc) io->delay_us(io->context, 10);
 		else if (!clock_wait(io, branches[n], 1u << 31, 0)) {
+			*trace = (struct onyx_clock_trace){4, branches[n], 0x80000000u, 0,
+			    io->read(io->context, branches[n])};
 			result = ONYX_CLOCK_TIMEOUT; goto rollback;
 		}
 	}

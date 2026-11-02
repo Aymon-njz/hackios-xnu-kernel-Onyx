@@ -22,7 +22,11 @@ enum onyx_clock_result {
  * No PLL or GX programming. This is an access-test frequency, not the final
  * GMU firmware operating point. On success clocks stay on until reboot.
  * On failure saved request fields are restored best-effort and quarantined. */
-enum onyx_clock_result onyx_gen8_clocks_tcxo(struct onyx_rsc_io *gpucc);
+/* Last checked register, captured before rollback. phase: 1=config,
+ * 2=root update, 3=branch vote, 4=branch halt. */
+struct onyx_clock_trace { uint32_t phase, offset, mask, expected, observed; };
+enum onyx_clock_result onyx_gen8_clocks_tcxo(struct onyx_rsc_io *gpucc,
+    struct onyx_clock_trace *trace);
 
 enum onyx_gen8_power_missing {
 	ONYX_CX_OFF = 1u << 0,
