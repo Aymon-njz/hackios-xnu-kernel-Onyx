@@ -691,15 +691,17 @@ static bool
 onyx_gpi_reap_event(struct onyx_gpi_state *state, uint32_t *events)
 {
 	struct onyx_gpi_tre *event_ring = (struct onyx_gpi_tre *)(state->pool + ONYX_GPI_EVENT_OFF);
-	uint32_t hardware_rp = onyx_touch_rd(onyx_gpi + GPI_EV_CONTEXT + 0x10);
+	int memory_poll = 0;
+	PE_parse_boot_argn("onyx_touch_event_memory", &memory_poll, sizeof(memory_poll));
+	uint32_t hardware_rp = memory_poll ? 0 : onyx_touch_rd(onyx_gpi + GPI_EV_CONTEXT + 0x10);
 	uint32_t base = (uint32_t)(ONYX_GPI_IOVA + ONYX_GPI_EVENT_OFF);
 	unsigned budget = ONYX_GPI_EVENT_LEN / ONYX_GPI_TRE_BYTES;
 
-	while (hardware_rp != base + state->event_rp) {
+	while (memory_poll || hardware_rp != base + state->event_rp) {
 		/* A bad DMA pointer must not trap this thread in a non-terminating
 		 * loop: the transfer deadline is checked by our caller. */
-		if (hardware_rp < base || hardware_rp >= base + ONYX_GPI_EVENT_LEN ||
-		    (hardware_rp - base) % ONYX_GPI_TRE_BYTES != 0 || budget-- == 0) {
+		if ((!memory_poll && (hardware_rp < base || hardware_rp >= base + ONYX_GPI_EVENT_LEN ||
+		    (hardware_rp - base) % ONYX_GPI_TRE_BYTES != 0)) || budget-- == 0) {
 			printf("onyx-touch: invalid GPI event cursor %#x (base %#x software %#x)\n",
 			    hardware_rp, base, state->event_rp);
 			state->transfer_failed = true;
@@ -710,6 +712,7 @@ onyx_gpi_reap_event(struct onyx_gpi_state *state, uint32_t *events)
 		 * until the producer advances; invalidate before decoding them. */
 		onyx_touch_clean((vm_offset_t)event, sizeof(*event));
 		uint32_t type = event->dword[3] >> 16 & 0xff;
+		if (memory_poll && type == 0) return *events != 0;
 
 		if (type == ONYX_GPI_EVENT_COMPLETE) {
 			(*events)++;
@@ -719,6 +722,9 @@ onyx_gpi_reap_event(struct onyx_gpi_state *state, uint32_t *events)
 			state->transfer_failed = true;
 			return false;
 		}
+		/* The first-transfer diagnostic consumes no slots and submits no
+		 * second transfer: ring reuse still requires a producer cursor. */
+		if (memory_poll) return true;
 		state->event_rp = onyx_gpi_advance(state->event_rp, ONYX_GPI_TRE_BYTES, ONYX_GPI_EVENT_LEN);
 		state->event_wp = onyx_gpi_advance(state->event_wp, ONYX_GPI_TRE_BYTES, ONYX_GPI_EVENT_LEN);
 		/* Returning an event slot to GPI is done through the event doorbell. */
