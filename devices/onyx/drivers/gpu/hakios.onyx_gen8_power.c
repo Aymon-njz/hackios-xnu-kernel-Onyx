@@ -82,8 +82,6 @@ onyx_gen8_clocks_tcxo(struct onyx_rsc_io *io, struct onyx_clock_trace *trace)
 		*trace = (struct onyx_clock_trace){.phase=3, .offset=branches[n], .mask=1, .expected=1, .observed=
 		    io->read(io->context, branches[n])};
 		if (!(trace->observed & 1)) unlatched_branches |= 1u << n;
-		/* AHB has no status bit contract: retain strict request checking. */
-		if (branches[n] == 0x90bc && !(trace->observed & 1)) goto rollback;
 		/* Tuna AHB uses BRANCH_HALT_DELAY. Other branches have bit31
 		 * status; do not treat vote=running. */
 		if (branches[n] == 0x90bc) io->delay_us(io->context, 10);

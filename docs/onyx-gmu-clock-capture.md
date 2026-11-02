@@ -74,3 +74,19 @@ independent proof of physical clock activity or accessibility of GMU registers.
 Tests cover a non-echoing HUB request with CLK_OFF clear, a rejected request
 with CLK_OFF set (must time out), FSM ON despite CLK_OFF, a rejected AHB request
 (must fail), and non-echoing always-on requests with diagnostic masks.
+
+## AHB stock-driver comparison
+
+Run gmu-stock-41492866975 passed journal CRC/identity checks: snapshot 8,
+545790 bytes. It reached the AHB bit0 readback check, which returned zero.
+Stock recovery subsequently accepted AHB clk_prepare_enable=1 and reported
+logical count 1 while its CBCR still read zero; the logical request was then
+returned to zero. Saved output: out/logs/stock-ahb-clock/enable-test.txt.
+
+AHB now follows its stock BRANCH_HALT_DELAY contract: enable request, 10 us
+settle, no unsupported bit0-echo requirement. Non-echoing requests remain in
+the diagnostic mask. This does NOT independently validate physical AHB/GMU
+access, and no GMU firmware start is enabled by this patch. The always-on HUB
+logical request from the earlier stock comparison may remain physically set
+until reboot because its stock ops omit disable. No raw MMIO writes were made
+in recovery; debugfs was unmounted after the comparison.

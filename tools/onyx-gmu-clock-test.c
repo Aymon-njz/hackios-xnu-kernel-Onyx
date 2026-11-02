@@ -77,8 +77,9 @@ int main(void)
 	reset(&f); io.quarantined = 0; f.reject = 0x93e8; f.r[0x93e8 / 4] = 0xa0000000;
 	assert(onyx_gen8_clocks_tcxo(&io, &trace) == ONYX_CLOCK_OK); /* FSM ON */
 	reset(&f); f.reject = 0x90bc;
-	assert(onyx_gen8_clocks_tcxo(&io, &trace) == ONYX_CLOCK_READBACK && io.quarantined);
-	assert(trace.offset == 0x90bc && trace.phase == 3);
+	assert(onyx_gen8_clocks_tcxo(&io, &trace) == ONYX_CLOCK_OK && !io.quarantined);
+	assert(trace.unlatched_branches == 8 && f.waits > 0);
+	io.quarantined = 1;
 	unsigned writes = f.writes;
 	assert(onyx_gen8_clocks_tcxo(&io, &trace) == ONYX_CLOCK_ARGUMENT && f.writes == writes);
 	puts("GMU TCXO clocks: success, CX/ownership gates, update busy, rejected config, root/branch timeouts and rollback passed");
