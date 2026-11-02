@@ -45,4 +45,32 @@ enum onyx_hfi_status onyx_hfi_send(struct onyx_hfi *hfi,
  * Errors leave the consumer index and output buffer unchanged. */
 enum onyx_hfi_status onyx_hfi_receive(struct onyx_hfi *hfi, unsigned queue,
     uint32_t *message, size_t capacity, size_t *words);
+
+struct onyx_gen8_ib {
+	uint64_t address; /* GPU virtual address, not a CPU pointer */
+	uint32_t bytes;
+};
+/* Build an inline H2F_MSG_ISSUE_CMD packet. No indirect list, profiling or
+ * sync objects are supported yet. This encodes bytes but does not validate
+ * that GPU addresses are mapped, register a context, or submit a job. */
+enum onyx_hfi_status onyx_gen8_submit_packet(uint32_t context, uint32_t timestamp,
+    unsigned sequence, const struct onyx_gen8_ib *ibs, size_t count,
+    uint32_t *packet, size_t capacity, size_t *words);
+
+struct onyx_gen8_context_header {
+	uint32_t version, start_addr, queue_size, out_fence_ts, sync_obj_ts;
+	uint32_t read_index, write_index, fence_address, fence_bytes, reserved[3];
+};
+struct onyx_gen8_context_queue {
+	void *shared;
+	uint32_t gmu_address, context;
+};
+/* Prepare a 4 KiB context queue; actual GMU mapping and HFI context
+ * registration/acknowledgement must precede any hardware notification. */
+enum onyx_hfi_status onyx_gen8_context_init(struct onyx_gen8_context_queue *queue,
+    void *shared, size_t bytes, uint32_t gmu_address, uint32_t context);
+/* Enqueue a validated ISSUE_CMD packet into CPU shared memory. No hardware
+ * doorbell is issued. Caller owns mapping, cache policy, lifetime and fences. */
+enum onyx_hfi_status onyx_gen8_context_enqueue(struct onyx_gen8_context_queue *queue,
+    const uint32_t *packet, size_t words);
 #endif

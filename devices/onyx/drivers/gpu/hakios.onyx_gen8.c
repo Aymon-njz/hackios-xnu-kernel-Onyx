@@ -30,6 +30,16 @@ onyx_gen8_validate(__unused void *parameter, __unused wait_result_t result)
 		return;
 	}
 	printf("onyx-gen8: CPU queue ABI check passed; no hardware doorbell issued\n");
+	struct onyx_gen8_context_queue context_queue = { 0 };
+	struct onyx_gen8_ib ib = { 0x100000, 4 }; /* test address only; no GPU mapping */
+	uint32_t packet[11];
+	if (onyx_gen8_submit_packet(1, 1, 1, &ib, 1, packet, 11, &count) != ONYX_HFI_OK ||
+	    onyx_gen8_context_init(&context_queue, hfi_check_memory, 4096, 0x60002000, 1) != ONYX_HFI_OK ||
+	    onyx_gen8_context_enqueue(&context_queue, packet, count) != ONYX_HFI_OK) {
+		printf("onyx-gen8: CPU submission ABI check failed\n");
+		return;
+	}
+	printf("onyx-gen8: CPU submission ABI check passed; no GPU job dispatched\n");
 	const uint8_t *image = hakios_image_file("fw", "gen80600_gmu.bin", &bytes, NULL);
 	if (!image || !bytes) {
 		printf("onyx-gen8: no preloaded fw/gen80600_gmu.bin; firmware validation unavailable\n");

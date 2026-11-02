@@ -76,6 +76,46 @@ int main(void)
 	assert(onyx_hfi_send(&hfi, message, 0) == ONYX_HFI_ARGUMENT);
 	message[0] = 0x201;
 	assert(onyx_hfi_send(&hfi, message, 1) == ONYX_HFI_ARGUMENT);
+	/* Context submission uses a different 48-byte header and 1012-word ring. */
+	static _Alignas(16) uint8_t context_memory[4096];
+	struct onyx_gen8_context_queue context_queue;
+	struct onyx_gen8_context_header *context_header = (void *)context_memory;
+	struct onyx_gen8_ib ibs[83];
+	uint32_t packet[255];
+	for (unsigned n = 0; n < 83; n++) ibs[n] = (struct onyx_gen8_ib){ 0x123456780ull, 16 };
+	assert(onyx_gen8_submit_packet(7, 9, 0x123, ibs, 1, packet, 255, &words) == ONYX_HFI_OK);
+	const uint32_t golden[] = { 0x12300b82, 7, 0, 9, 0, 0, 1, 0, 0x23456780, 1, 16 };
+	assert(words == 11 && memcmp(packet, golden, sizeof(golden)) == 0);
+	assert(onyx_gen8_context_init(&context_queue, context_memory, 4096, 0x60002000, 7) == ONYX_HFI_OK);
+	assert(context_header->start_addr == 0x60002030 && context_header->queue_size == 1012);
+	context_header->read_index = context_header->write_index = 1008;
+	assert(onyx_gen8_context_enqueue(&context_queue, packet, words) == ONYX_HFI_OK);
+	assert(context_header->write_index == 8);
+	uint32_t *context_data = (void *)(context_memory + 48);
+	for (unsigned n = 0; n < 11; n++) assert(context_data[(1008 + n) % 1012] == golden[n]);
+	assert(context_data[7] == 0xfafafafa);
+	for (unsigned n = 1; n <= 82; n++) {
+		assert(onyx_gen8_submit_packet(7, 0, 4095, ibs, n, packet, 255, &words) == ONYX_HFI_OK);
+		assert(words == 8 + n * 3);
+		assert(onyx_gen8_context_init(&context_queue, context_memory, 4096, 0x60002000, 7) == ONYX_HFI_OK);
+		assert(onyx_gen8_context_enqueue(&context_queue, packet, words) == ONYX_HFI_OK);
+	}
+	assert(onyx_gen8_submit_packet(7, 9, 0, ibs, 83, packet, 255, &words) == ONYX_HFI_ARGUMENT && !words);
+	assert(onyx_gen8_submit_packet(7, 9, 4096, ibs, 1, packet, 255, &words) == ONYX_HFI_ARGUMENT);
+	assert(onyx_gen8_submit_packet(7, 9, 0, ibs, 1, packet, 10, &words) == ONYX_HFI_CAPACITY);
+	ibs[0].address = UINT64_MAX - 3;
+	assert(onyx_gen8_submit_packet(7, 9, 0, ibs, 1, packet, 255, &words) == ONYX_HFI_ARGUMENT);
+	ibs[0].address = 0x1000;
+	assert(onyx_gen8_submit_packet(7, 9, 0, ibs, 1, packet, 255, &words) == ONYX_HFI_OK);
+	assert(onyx_gen8_context_init(&context_queue, context_memory, 4096, 0x60002000, 7) == ONYX_HFI_OK);
+	context_header->write_index = 1008;
+	uint8_t saved_context[4096]; memcpy(saved_context, context_memory, 4096);
+	assert(onyx_gen8_context_enqueue(&context_queue, packet, words) == ONYX_HFI_FULL);
+	assert(memcmp(saved_context, context_memory, 4096) == 0);
+	context_header->write_index = 1012;
+	assert(onyx_gen8_context_enqueue(&context_queue, packet, words) == ONYX_HFI_CORRUPT);
+	packet[1] = 8;
+	assert(onyx_gen8_context_enqueue(&context_queue, packet, words) == ONYX_HFI_ARGUMENT);
 	puts("Gen8 HFI layout, framing, wraparound and malformed-peer checks passed");
 	return 0;
 }

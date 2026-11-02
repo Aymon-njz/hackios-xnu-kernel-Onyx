@@ -43,6 +43,93 @@ onyx_hfi_init(struct onyx_hfi *hfi, void *shared, size_t bytes, uint32_t address
 	return ONYX_HFI_OK;
 }
 
+enum onyx_hfi_status
+onyx_gen8_submit_packet(uint32_t context, uint32_t timestamp, unsigned sequence,
+    const struct onyx_gen8_ib *ibs, size_t count, uint32_t *packet,
+    size_t capacity, size_t *words)
+{
+	if (!words) return ONYX_HFI_ARGUMENT;
+	*words = 0;
+	/* Header carries an eight-bit word count; each inline IB takes three. */
+	if (!packet || !ibs || !context || !count || count > 82 || sequence > 4095)
+		return ONYX_HFI_ARGUMENT;
+	size_t length = 8 + 3 * count;
+	if (capacity < length) return ONYX_HFI_CAPACITY;
+	for (size_t n = 0; n < count; n++) {
+		if (!ibs[n].bytes || (ibs[n].bytes & 3) || (ibs[n].address & 3) ||
+		    ibs[n].address > UINT64_MAX - ibs[n].bytes) return ONYX_HFI_ARGUMENT;
+	}
+	packet[0] = 130u | (uint32_t)length << 8 | (uint32_t)sequence << 20;
+	packet[1] = context;
+	packet[2] = 0; /* flags */
+	packet[3] = timestamp;
+	packet[4] = packet[5] = 0; /* no profiling buffer */
+	packet[6] = (uint32_t)count;
+	packet[7] = 0; /* no indirect IB list */
+	for (size_t n = 0; n < count; n++) {
+		packet[8 + 3 * n] = (uint32_t)ibs[n].address;
+		packet[9 + 3 * n] = (uint32_t)(ibs[n].address >> 32);
+		packet[10 + 3 * n] = ibs[n].bytes;
+	}
+	*words = length;
+	return ONYX_HFI_OK;
+}
+
+_Static_assert(sizeof(struct onyx_gen8_context_header) == 48, "context HFI ABI");
+_Static_assert(offsetof(struct onyx_gen8_context_header, read_index) == 20, "context HFI index ABI");
+
+enum onyx_hfi_status
+onyx_gen8_context_init(struct onyx_gen8_context_queue *queue, void *shared,
+    size_t bytes, uint32_t address, uint32_t context)
+{
+	if (!queue || !shared || !context || ((uintptr_t)shared & 15) ||
+	    (address & 15) || bytes != 4096 || address > UINT32_MAX - 4096)
+		return ONYX_HFI_ARGUMENT;
+	for (size_t n = 0; n < 1024; n++) ((uint32_t *)shared)[n] = 0;
+	struct onyx_gen8_context_header *header = shared;
+	header->start_addr = address + 48;
+	header->queue_size = 1012; /* 4096 minus the 48-byte header, in words */
+	shared_barrier();
+	queue->shared = shared;
+	queue->gmu_address = address;
+	queue->context = context;
+	return ONYX_HFI_OK;
+}
+
+enum onyx_hfi_status
+onyx_gen8_context_enqueue(struct onyx_gen8_context_queue *queue,
+    const uint32_t *packet, size_t words)
+{
+	if (!queue || !queue->shared || !packet || words < 11 || words > 254 ||
+	    (packet[0] & 0xff) != 130 || ((packet[0] >> 8) & 255) != words ||
+	    ((packet[0] >> 16) & 15) != 0 || packet[1] != queue->context ||
+	    packet[2] || packet[4] || packet[5] || packet[7] ||
+	    !packet[6] || packet[6] > 82 || 8u + 3u * packet[6] != words)
+		return ONYX_HFI_ARGUMENT;
+	for (size_t n = 8; n < words; n += 3) {
+		uint64_t address = packet[n] | (uint64_t)packet[n + 1] << 32;
+		if (!packet[n + 2] || (packet[n] & 3) || (packet[n + 2] & 3) ||
+		    address > UINT64_MAX - packet[n + 2]) return ONYX_HFI_ARGUMENT;
+	}
+	struct onyx_gen8_context_header *header = queue->shared;
+	uint32_t read = __atomic_load_n(&header->read_index, __ATOMIC_ACQUIRE);
+	uint32_t write = __atomic_load_n(&header->write_index, __ATOMIC_ACQUIRE);
+	shared_barrier();
+	if (header->version || header->start_addr != queue->gmu_address + 48 ||
+	    header->queue_size != 1012 || read >= 1012 || write >= 1012 ||
+	    (read & 3) || (write & 3)) return ONYX_HFI_CORRUPT;
+	uint32_t padded = ((uint32_t)words + 3) & ~3u;
+	uint32_t used = (write + 1012 - read) % 1012;
+	if (1012 - used <= padded) return ONYX_HFI_FULL;
+	uint32_t *data = (uint32_t *)((uint8_t *)queue->shared + 48);
+	for (uint32_t n = 0; n < padded; n++)
+		data[(write + n) % 1012] = n < words ? packet[n] : 0xfafafafa;
+	shared_barrier();
+	__atomic_store_n(&header->write_index, (write + padded) % 1012, __ATOMIC_RELEASE);
+	shared_barrier();
+	return ONYX_HFI_OK;
+}
+
 static enum onyx_hfi_status
 indices(struct onyx_hfi *hfi, unsigned queue, uint32_t *read, uint32_t *write)
 {

@@ -138,6 +138,26 @@ cc -std=c11 -Wall -Wextra -Werror -fsanitize=undefined -Ixnu/files/bsd/dev \
 
 ### Metal library baseline
 
+### Gen8 submission transport
+
+The Gen8 HFI module also encodes inline `H2F_MSG_ISSUE_CMD` packets and prepares
+the separate per-context queues used by SM8735's hardware scheduler. These queues
+have a 48-byte header followed by 1012 words in a 4 KiB allocation. They must not
+be confused with the global command/message/debug queues. The inline IB record
+contains a 64-bit GPU virtual address and a size in bytes.
+
+This implementation supports up to 82 inline IBs, rejects malformed lengths,
+unaligned/overflowing address ranges, foreign context IDs, corrupt indices and
+full queues. It does not support indirect lists, profiling, sync objects, actual
+context registration or GPU address mapping. No hardware doorbell is issued.
+Tests compare a literal packet with KGSL's wire layout, exercise every inline
+IB count and check context-queue wrapping/backpressure. The opt-in kernel CPU
+validation invokes the same packet encoder and queue routines without dispatching
+a GPU job. GMU boot, context acknowledgement and retirement/fence handling remain
+required before this can execute commands.
+
+### Metal library build
+
 The pinned Metal source needed `<algorithm>` for `std::fill`, a constexpr
 bit-cast compatible with Apple Clang, and complete initialization of one probe
 binding. `tools/metal/clang-compat.patch` records these changes against upstream
