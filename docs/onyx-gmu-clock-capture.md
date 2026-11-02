@@ -17,3 +17,20 @@ raw observed value BEFORE rollback. It preserves the same hardware sequence
 and timeout limits. Tests assert that config rejection, root timeout and branch
 timeout diagnostics survive rollback. Do not skip the failed check or claim
 working clocks, GMU, GPU execution or Metal from this capture.
+
+## Diagnostic build 41485393676
+
+Recovered `gmu-trace-41485393676` from recovery. Both CRCs and run ID
+validated: snapshot 7, 499306 payload bytes, no wrap/capacity flags. The helper
+reached phase 3: offset **0x9008**, mask 1, expected 1, observed **0** before
+rollback. Both HUB and GMU root config/update checks therefore completed before
+this branch vote failed. This rules out root config rejection as the failure in
+this run. It does not prove every branch is running or that GMU access is ready.
+
+The stock Tuna GPUCC probe sets bit 0 at 0x9008 (`gpu_cc_cxo_aon_clk`)
+among its always-on setup, after PLL configuration. It does not define that
+register as a normal polled `clk_branch`. Our generic branch treatment needs
+review against that ordering and the XO reset state; removing readback checks
+would not establish a working clock. No firmware boot was attempted. Logging
+continued after the failed test. Recovery devmem cannot read the registers
+because /dev/mem is absent; no recovery register writes were made.
