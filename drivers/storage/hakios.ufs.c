@@ -708,12 +708,9 @@ ufs_journal_thread(__unused void *parameter, __unused wait_result_t result)
 	identity[sizeof(identity) - 1] = 0;
 	for (uint32_t n = 0; n < ufs_parts; n++) {
 		if (strncmp((const char *)ufs_page->part[n].name, "userdata", 9)) continue;
-		if (ufs_page->part[n].block_size != 4096 ||
-		    ufs_page->part[n].blocks != ONYX_USERDATA_BYTES / 4096 ||
-		    ufs_page->part[n].start_lba != ONYX_USERDATA_START_LBA ||
-		    ufs_lun[n] != 0 || ufs_page->part[n].lun != 0 ||
-		    ufs_page->part[n].start_lba > UINT32_MAX - ONYX_USERDATA_BYTES / 4096 ||
-		    ufs_lun_offset[n] != ufs_page->part[n].start_lba * 4096) continue;
+		if (!onyx_journal_geometry(ufs_page->part[n].block_size, ufs_page->part[n].blocks,
+		    ufs_page->part[n].start_lba, ufs_page->part[n].unit, ufs_page->part[n].lun,
+		    ufs_lun[n], ufs_lun_offset[n])) continue;
 		first = ufs_page->part[n].start_lba + ONYX_USERDATA_BYTES / 4096 - 512;
 		matches++;
 	}

@@ -10,6 +10,18 @@
 #define ONYX_JOURNAL_FIRST_LBA 64041467ULL
 
 static inline bool
+onyx_journal_geometry(uint32_t block_size, uint64_t blocks, uint64_t start,
+    uint16_t unit, uint8_t firmware_lun, uint8_t native_lun, uint64_t native_offset)
+{
+	/* Old UEFI device paths can leave LUN unknown (0xff). The native
+	 * mapping must still be unit/LUN 0, with the pinned address and size;
+	 * a matching journal signature is also read from LUN 0 before writes. */
+	return block_size == 4096 && blocks == ONYX_USERDATA_BYTES / 4096 &&
+	    start == ONYX_USERDATA_START_LBA && unit == 0 && native_lun == 0 &&
+	    (firmware_lun == 0 || firmware_lun == 0xff) && native_offset == start * 4096;
+}
+
+static inline bool
 onyx_journal_span(uint64_t first, uint64_t lba, uint64_t blocks)
 {
 	return first == ONYX_JOURNAL_FIRST_LBA && lba >= first && lba - first < 512u &&

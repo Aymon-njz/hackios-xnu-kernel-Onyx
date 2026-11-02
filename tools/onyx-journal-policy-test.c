@@ -5,6 +5,16 @@
 int main(void)
 {
 	uint64_t first = ONYX_JOURNAL_FIRST_LBA;
+	uint64_t start = ONYX_USERDATA_START_LBA, blocks = ONYX_USERDATA_BYTES / 4096;
+	assert(onyx_journal_geometry(4096, blocks, start, 0, 0xff, 0, start * 4096));
+	assert(onyx_journal_geometry(4096, blocks, start, 0, 0, 0, start * 4096));
+	assert(!onyx_journal_geometry(4096, blocks, start, 0, 1, 0, start * 4096));
+	assert(!onyx_journal_geometry(4096, blocks, start, 0, 0xff, 1, start * 4096));
+	assert(!onyx_journal_geometry(4096, blocks, start, 1, 0xff, 0, start * 4096));
+	assert(!onyx_journal_geometry(512, blocks, start, 0, 0xff, 0, start * 4096));
+	assert(!onyx_journal_geometry(4096, blocks - 1, start, 0, 0xff, 0, start * 4096));
+	assert(!onyx_journal_geometry(4096, blocks, start + 1, 0, 0xff, 0, start * 4096));
+	assert(!onyx_journal_geometry(4096, blocks, start, 0, 0xff, 0, start * 4096 + 4096));
 	assert(onyx_journal_span(first, first, 512));
 	assert(onyx_journal_span(first, first + 511, 1));
 	assert(!onyx_journal_span(first, first - 1, 1));
