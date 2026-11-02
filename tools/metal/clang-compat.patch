@@ -1,0 +1,72 @@
+diff --git a/include/hakios-metal/a6xx.hpp b/include/hakios-metal/a6xx.hpp
+index b01af4c..3036d90 100644
+--- a/include/hakios-metal/a6xx.hpp
++++ b/include/hakios-metal/a6xx.hpp
+@@ -3970,35 +3970,15 @@ constexpr uint32_t regVfdDestCntlInstr(uint32_t i) { return REG_A6XX_VFD_DEST_CN
+ // --- floats in registers -------------------------------------------------------------------------------------------------------
+ 
+ // The bits of a float, as Mesa's fui() (util/u_math.h) gives them to the encoders of the GRAS_CL_VPORT_*, Z_CLAMP,
+-// Z_BOUNDS, POLY_OFFSET and BLEND_*_F32 registers. Written out by hand because C++17 has no constexpr bit_cast: the
+-// exponent is found by halving or doubling (both exact), the mantissa is what is left below the leading one, scaled
+-// by 2^23 (exact: a float has 24 significant bits). A finite value round-trips exactly (tests/a6xx_test.cpp holds it
+-// to memcpy); NaN gives the quiet NaN, an infinity 0x7f800000 with its sign.
++// Z_BOUNDS, POLY_OFFSET and BLEND_*_F32 registers. Clang provides constexpr bit_cast as an extension in C++17.
++// Finite values and signed zero retain their bits; NaN is canonicalized as before.
+ constexpr uint32_t fui(float f) {
+-    uint32_t sign = __builtin_signbit(f) ? 0x80000000u : 0u;
+     if (f != f) {
+         return 0x7fc00000u;
+     }
+-    float a = f < 0 ? -f : f;
+-    if (a == 0.0f) {
+-        return sign;
+-    }
+-    if (a > 3.4028234663852886e38f) {
+-        return sign | 0x7f800000u;
+-    }
+-    int e = 127;
+-    while (a >= 2.0f) {
+-        a *= 0.5f;
+-        e++;
+-    }
+-    while (a < 1.0f && e > 1) {
+-        a *= 2.0f;
+-        e--;
+-    }
+-    if (a < 1.0f) {
+-        return sign | uint32_t(a * 8388608.0f);   // a denormal: exponent 0, the value is mantissa * 2^-149 = a * 2^-126
+-    }
+-    return sign | (uint32_t(e) << 23) | uint32_t((a - 1.0f) * 8388608.0f);
++    // Clang's C++17 bit_cast extension is constexpr even on Apple Clang
++    // versions whose signbit builtin cannot be evaluated at compile time.
++    return __builtin_bit_cast(uint32_t, f);
+ }
+ 
+ // GRAS_CL_VPORT[0]'s six words for a Metal viewport, as turnip's tu6_emit_viewport computes them (tu_pipeline.cc:
+diff --git a/src/fake_gpu.cpp b/src/fake_gpu.cpp
+index 4fb84ff..bf03025 100644
+--- a/src/fake_gpu.cpp
++++ b/src/fake_gpu.cpp
+@@ -1,5 +1,7 @@
+ #include "hakios-metal/fake_gpu.hpp"
+ 
++#include <algorithm>
++
+ #include <cerrno>
+ #include <cmath>
+ #include <chrono>
+diff --git a/tools/probe.cpp b/tools/probe.cpp
+index 89cc762..dea332f 100644
+--- a/tools/probe.cpp
++++ b/tools/probe.cpp
+@@ -1483,7 +1483,9 @@ int main(int argc, char** argv) {
+                 const uint64_t words = t->buffer()->length() / 4;
+                 for (uint64_t i = 0; i < words; i++) w[i] = canary;
+                 const uint32_t groups[3] = {W / 8, H / 2, D - 1}, local82[3] = {8, 2, 1};
+-                auto cb = runTex(is3d ? kernels::tex_fill_3d_air : kernels::tex_fill_arr_air, groups, local82, Bindings{{}, {t.get()}});
++                Bindings textureBindings{};
++                textureBindings.textures = {t.get()};
++                auto cb = runTex(is3d ? kernels::tex_fill_3d_air : kernels::tex_fill_arr_air, groups, local82, textureBindings);
+                 uint32_t right = 0, covered = 0, leftCanary = 0, left = 0, gapCanary = 0, gap = 0;
+                 const uint64_t slice = t->sliceBytes(), row = t->bytesPerRow();
+                 for (uint32_t z = 0; z < D; z++) {
