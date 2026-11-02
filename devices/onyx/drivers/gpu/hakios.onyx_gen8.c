@@ -11,6 +11,7 @@
 #include <mach/mach_types.h>
 #include "hakios.onyx_gen8_firmware.h"
 #include "hakios.onyx_gen8_hfi.h"
+#include "hakios.onyx_gen8_power.h"
 
 static uint8_t hfi_check_memory[ONYX_HFI_SHARED_BYTES] __attribute__((aligned(16)));
 
@@ -39,6 +40,7 @@ onyx_gen8_probe_gpucc(void)
 	};
 	printf("onyx-gen8: GPUCC read-only probe begins; no GMU/GPU MMIO or writes\n");
 	vm_offset_t gpucc = ml_io_map(0x03d90000, 0x9800);
+	uint32_t values[sizeof(registers) / sizeof(registers[0])] = { 0 };
 	if (!gpucc) {
 		printf("onyx-gen8: cannot map GPUCC; probe stopped\n");
 		return;
@@ -46,8 +48,15 @@ onyx_gen8_probe_gpucc(void)
 	for (unsigned n = 0; n < sizeof(registers) / sizeof(registers[0]); n++) {
 		printf("onyx-gen8: GPUCC before read %s offset %#x\n", registers[n].name, registers[n].offset);
 		uint32_t value = *(volatile uint32_t *)(gpucc + registers[n].offset);
+		values[n] = value;
 		printf("onyx-gen8: GPUCC %s = %#x\n", registers[n].name, value);
 	}
+	uint32_t missing = onyx_gen8_power_missing(values[1], values[4], values[5], values[6], values[7]);
+	printf("onyx-gen8: power prerequisites mask %#x: CX off=%u collapsed=%u GMU clock off=%u CXO off=%u HUB off=%u GMU RCG off=%u\n",
+	    missing, !!(missing & ONYX_CX_OFF), !!(missing & ONYX_CX_COLLAPSED),
+	    !!(missing & ONYX_GMU_CLOCK_OFF), !!(missing & ONYX_CXO_CLOCK_OFF),
+	    !!(missing & ONYX_HUB_CLOCK_OFF), !!(missing & ONYX_GMU_RCG_OFF));
+	printf("onyx-gen8: startup blocked: regulator/RPMh, secure initialization and GPU/GMU mappings not implemented\n");
 	printf("onyx-gen8: GPUCC probe complete; power and clocks unchanged; GPU is not started\n");
 }
 
