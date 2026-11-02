@@ -1,5 +1,4 @@
-/* Status definitions from Tuna gpucc-tuna.c, gdsc.c and clk-branch.h.
- * These helpers assess readback; they do not enable supplies or clocks. */
+/* Bounded power/clock helpers derived from Tuna GPUCC and GDSC. */
 #ifndef HAKIOS_ONYX_GEN8_POWER_H
 #define HAKIOS_ONYX_GEN8_POWER_H
 #include <stdint.h>
@@ -23,7 +22,7 @@ enum onyx_clock_result {
  * GMU firmware operating point. On success clocks stay on until reboot.
  * On failure saved request fields are restored best-effort and quarantined. */
 /* Last checked register, captured before rollback. phase: 1=config,
- * 2=root update, 3=branch vote, 4=branch halt. */
+ * 2=root update, 3=branch vote, 4=branch halt, 5=always-on request. */
 struct onyx_clock_trace { uint32_t phase, offset, mask, expected, observed; };
 enum onyx_clock_result onyx_gen8_clocks_tcxo(struct onyx_rsc_io *gpucc,
     struct onyx_clock_trace *trace);

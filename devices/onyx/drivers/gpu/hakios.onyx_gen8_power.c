@@ -15,9 +15,12 @@ onyx_gen8_clocks_tcxo(struct onyx_rsc_io *io, struct onyx_clock_trace *trace)
 	/* Tuna gpucc-tuna.c and clk-rcg2.c: source 0 is TCXO, HID divider
 	 * encodes 2*div-1. CMD root-enable=bit1, update=bit0, root-off=bit31. */
 	static const uint32_t roots[] = { 0x93ec, 0x9318 }; /* HUB, GMU */
-	static const uint32_t branches[] = { 0x9008, 0x90e4, 0x93e8, 0x90e8, 0x90bc, 0x90d4 };
-	uint32_t old_cmd[2], old_cfg[2], old_branch[6];
-	unsigned roots_touched = 0, branches_touched = 0;
+	/* gpucc-tuna.c probe order. These controls have no clk_branch halt
+	 * contract: never interpret bit31 as status here. */
+	static const uint32_t aon[] = { 0x93a4, 0x9008, 0x93a8, 0x9004, 0x90cc };
+	static const uint32_t branches[] = { 0x90e4, 0x93e8, 0x90e8, 0x90bc, 0x90d4 };
+	uint32_t old_cmd[2], old_cfg[2], old_branch[5], old_aon[5];
+	unsigned roots_touched = 0, branches_touched = 0, aon_touched = 0;
 	enum onyx_clock_result result = ONYX_CLOCK_READBACK;
 	struct onyx_clock_trace local = {0, 0, 0, 0, 0};
 	if (!trace) trace = &local;
@@ -31,7 +34,16 @@ onyx_gen8_clocks_tcxo(struct onyx_rsc_io *io, struct onyx_clock_trace *trace)
 		old_cfg[n] = io->read(io->context, roots[n] + 4);
 		if (old_cmd[n] & 1) return ONYX_CLOCK_ARGUMENT; /* update already in progress */
 	}
-	for (unsigned n = 0; n < 6; n++) old_branch[n] = io->read(io->context, branches[n]);
+	for (unsigned n = 0; n < 5; n++) old_branch[n] = io->read(io->context, branches[n]);
+	for (unsigned n = 0; n < 5; n++) old_aon[n] = io->read(io->context, aon[n]);
+	/* Follow the stock always-on prerequisite order before roots/branches.
+	 * Preserve all unrelated fields. Record but defer bit0 checks until the
+	 * complete prerequisite sequence has settled; no undefined halt polling. */
+	for (unsigned n = 0; n < 5; n++) {
+		aon_touched = n + 1;
+		io->write(io->context, aon[n], old_aon[n] | 1u);
+	}
+	io->delay_us(io->context, 10);
 	for (unsigned n = 0; n < 2; n++) {
 		uint32_t config = (old_cfg[n] & ~0x71fu) | 1u;
 		roots_touched = n + 1;
@@ -47,20 +59,25 @@ onyx_gen8_clocks_tcxo(struct onyx_rsc_io *io, struct onyx_clock_trace *trace)
 			result = ONYX_CLOCK_TIMEOUT; goto rollback;
 		}
 	}
-	for (unsigned n = 0; n < 6; n++) {
+	for (unsigned n = 0; n < 5; n++) {
 		branches_touched = n + 1;
 		io->write(io->context, branches[n], old_branch[n] | 1u);
 		*trace = (struct onyx_clock_trace){3, branches[n], 1, 1,
 		    io->read(io->context, branches[n])};
 		if (!(trace->observed & 1)) goto rollback;
 		/* Tuna AHB uses BRANCH_HALT_DELAY. Other branches have bit31
-		 * status, including always-on controls; do not treat vote=running. */
+		 * status; do not treat vote=running. */
 		if (branches[n] == 0x90bc) io->delay_us(io->context, 10);
 		else if (!clock_wait(io, branches[n], 1u << 31, 0)) {
 			*trace = (struct onyx_clock_trace){4, branches[n], 0x80000000u, 0,
 			    io->read(io->context, branches[n])};
 			result = ONYX_CLOCK_TIMEOUT; goto rollback;
 		}
+	}
+	for (unsigned n = 0; n < 5; n++) {
+		*trace = (struct onyx_clock_trace){5, aon[n], 1, 1,
+		    io->read(io->context, aon[n])};
+		if (!(trace->observed & 1)) goto rollback;
 	}
 	return ONYX_CLOCK_OK;
 rollback:
@@ -76,6 +93,11 @@ rollback:
 		(void)clock_wait(io, roots[n], 1, 0);
 		uint32_t current = io->read(io->context, roots[n]);
 		io->write(io->context, roots[n], (current & ~3u) | (old_cmd[n] & 2));
+	}
+	while (aon_touched) {
+		unsigned n = --aon_touched;
+		uint32_t current = io->read(io->context, aon[n]);
+		io->write(io->context, aon[n], (current & ~1u) | (old_aon[n] & 1));
 	}
 	io->quarantined = 1;
 	return result;

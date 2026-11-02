@@ -34,3 +34,19 @@ review against that ordering and the XO reset state; removing readback checks
 would not establish a working clock. No firmware boot was attempted. Logging
 continued after the failed test. Recovery devmem cannot read the registers
 because /dev/mem is absent; no recovery register writes were made.
+
+## Always-on sequence patch
+
+The clock helper now writes all five stock always-on prerequisite controls in
+probe order (0x93a4, 0x9008, 0x93a8, 0x9004, 0x90cc), preserving other bits,
+before configuring TCXO roots and normal branches. These are not generic
+clk_branch objects, so undefined bit31 halt polling is removed for 0x9008.
+After the full sequence, all five bit0 requests must read back as enabled;
+phase 5 reports a mismatch and rolls back/quarantines. Normal branches retain
+strict vote and documented halt/delay checks. Reverse rollback now covers the
+always-on requests too. PLL and reset programming remain untouched.
+
+This addresses an incomplete/misordered prerequisite sequence, not a proven
+physical cause of the non-latching 0x9008 vote. It cannot establish GMU readiness
+without a new hardware capture. Tests include stock write order, rollback of
+all prerequisites and persistent 0x9008 rejection (still refused, not ignored).
