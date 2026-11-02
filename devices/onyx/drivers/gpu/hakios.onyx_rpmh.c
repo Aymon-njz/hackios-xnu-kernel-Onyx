@@ -1,6 +1,80 @@
 #include "hakios.onyx_rpmh.h"
 static uint16_t u16(const uint8_t *p) { return p[0] | (uint16_t)p[1] << 8; }
 static uint32_t u32(const uint8_t *p) { return u16(p) | (uint32_t)u16(p + 2) << 16; }
+
+static int write_checked(struct onyx_rsc_io *io, uint32_t offset, uint32_t value)
+{
+	io->write(io->context, offset, value);
+	return io->read(io->context, offset) == value;
+}
+
+enum onyx_rsc_result
+onyx_rsc_vote(struct onyx_rsc_io *io, uint32_t version, unsigned slot,
+    const struct onyx_rpmh_resource *resource, unsigned requested, unsigned existing)
+{
+	struct onyx_rsc_layout l;
+	uint32_t address, index;
+	if (!io || !io->read || !io->write || !io->delay_us || slot < 1 || slot > 2 ||
+	    onyx_rsc_layout(version, &l) ||
+	    onyx_rpmh_arc_vote(resource, requested, existing, &address, &index)) return ONYX_RSC_INVALID;
+	if (!io->owned || io->quarantined) return ONYX_RSC_NOT_OWNED;
+	uint32_t base = 0xd00 + slot * 0x2a0, bit = 1u << slot;
+	/* Refuse solver mode, pending IRQ, enabled commands or an active trigger.
+	 * Never repurpose slot 0, or clear anyone else's pending completion. */
+	uint32_t solver = io->read(io->context, ((version >> 16) & 255) == 3 ? 4 : 0);
+	if (solver & (1u << 24)) return ONYX_RSC_NOT_OWNED;
+	uint32_t control = io->read(io->context, base + l.control);
+	if (io->read(io->context, 0xd04) & bit ||
+	    !(io->read(io->context, base + l.status) & 1) ||
+	    io->read(io->context, base + l.enable) || io->read(io->context, base + l.wait) ||
+	    (control & ~(1u << 16))) return ONYX_RSC_BUSY;
+	/* Do not interleave a request with a firmware command on any active TCS.
+	 * Slot 0 remains untouched even when that makes startup unavailable. */
+	for (unsigned s = 0; s < 3; s++) if (s != slot &&
+	    io->read(io->context, 0xd00 + s * 0x2a0 + l.enable)) return ONYX_RSC_BUSY;
+	uint32_t old_message = io->read(io->context, base + l.message);
+	uint32_t old_address = io->read(io->context, base + l.address);
+	uint32_t old_data = io->read(io->context, base + l.data);
+	/* MSGID: eight-byte request, response required, write. */
+	if (!write_checked(io, base + l.control, 0) ||
+	    !write_checked(io, base + l.message, 0x10108) ||
+	    !write_checked(io, base + l.address, address) ||
+	    !write_checked(io, base + l.data, index) ||
+	    !write_checked(io, base + l.wait, 1) ||
+	    !write_checked(io, base + l.enable, 1) ||
+	    !write_checked(io, base + l.control, 1u << 16) ||
+	    !write_checked(io, base + l.control, (1u << 16) | (1u << 24))) {
+		io->quarantined = 1;
+		return ONYX_RSC_READBACK;
+	}
+	unsigned elapsed;
+	for (elapsed = 0; elapsed < 10000; elapsed += 10) {
+		if (io->read(io->context, 0xd04) & bit) break;
+		io->delay_us(io->context, 10);
+	}
+	if (elapsed == 10000) {
+		/* Do not restore or retry while the device may still be using this
+		 * request. Recovery must establish hardware ownership afresh. */
+		io->quarantined = 1;
+		return ONYX_RSC_TIMEOUT;
+	}
+	/* Completion observed: release only our slot. IRQ_CLEAR is W1C and is
+	 * deliberately not checked as an ordinary read/write register. */
+	if (!write_checked(io, base + l.enable, 0) || !write_checked(io, base + l.wait, 0)) {
+		io->quarantined = 1; return ONYX_RSC_READBACK;
+	}
+	io->write(io->context, 0xd08, bit);
+	if (!write_checked(io, base + l.control, 1u << 16) ||
+	    !write_checked(io, base + l.control, 0) ||
+	    !write_checked(io, base + l.message, old_message) ||
+	    !write_checked(io, base + l.address, old_address) ||
+	    !write_checked(io, base + l.data, old_data) ||
+	    !write_checked(io, base + l.control, control)) {
+		io->quarantined = 1; return ONYX_RSC_READBACK;
+	}
+	return ONYX_RSC_OK;
+}
+
 int onyx_rpmh_arc_vote(const struct onyx_rpmh_resource *r, unsigned requested,
     unsigned existing, uint32_t *address, uint32_t *index)
 {

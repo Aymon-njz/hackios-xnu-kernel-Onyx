@@ -21,4 +21,25 @@ struct onyx_rsc_layout {
 };
 /* Reject unknown versions rather than interpreting their registers as v3. */
 int onyx_rsc_layout(uint32_t version, struct onyx_rsc_layout *layout);
+
+/* Hardware transport adapter. Caller must hold exclusive ownership of APPS
+ * DRV2, serialize calls, supply device barriers in read/write, and keep an
+ * existing vote floor. An idle slot alone is NOT an ownership grant.
+ * Offsets passed to callbacks are relative to the 64 KiB DRV2 window.
+ * This interface is not wired to MMIO by the inventory-only kernel entry. */
+struct onyx_rsc_io {
+	void *context;
+	uint32_t (*read)(void *, uint32_t);
+	void (*write)(void *, uint32_t, uint32_t);
+	void (*delay_us)(void *, unsigned);
+	unsigned owned; /* set only after firmware/PM ownership is established */
+	unsigned quarantined; /* timeout or uncertain writes: no further requests */
+};
+enum onyx_rsc_result {
+	ONYX_RSC_OK, ONYX_RSC_INVALID, ONYX_RSC_NOT_OWNED, ONYX_RSC_BUSY,
+	ONYX_RSC_READBACK, ONYX_RSC_TIMEOUT
+};
+enum onyx_rsc_result onyx_rsc_vote(struct onyx_rsc_io *io, uint32_t version,
+    unsigned slot, const struct onyx_rpmh_resource *resource,
+    unsigned requested, unsigned existing);
 #endif

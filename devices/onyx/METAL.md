@@ -49,6 +49,18 @@ The inventory also records the version-specific solver capability register.
 An idle-looking TCS is not proof that it is available to XNU: solver/PM
 ownership and existing votes must be established before triggering requests.
 
+`onyx_rsc_vote` now implements a bounded single-request transport through an I/O
+adapter: ownership checks, empty-slot validation, firmware-command conflict
+refusal, checked programming, response-required ARC request, completion polling,
+and restoration of its own slot. Slot 0 is never reused. A readback error or a
+10 ms completion timeout quarantines the adapter; no retry or unsafe restoration
+is attempted while hardware may still use the request. Host tests cover success,
+restoration, unowned/occupied/solver states, rejected writes and timeout quarantine.
+This adapter is not connected to real MMIO. The observed firmware command in slot
+0 causes the transport to refuse requests until ownership/handoff is resolved.
+The caller must provide an established existing vote floor; zero is not evidence
+that a shared regulator is off. Hardware regulator control remains unavailable.
+
 The SM8735 module source was located at
 `crdroidandroid/android_kernel_xiaomi_sm8735-modules`, commit
 `8500748dae32f10507c02f1c94bc971553cb525b`.
