@@ -106,6 +106,32 @@ those dependencies or provide a Metal device.
 
 ### Metal library
 
+### Gen8 HFI queue component
+
+`drivers/gpu/onyx_gen8_hfi.{c,h}` under this device directory implements the
+host side of the Gen8 hardware-scheduler queue ABI. It initializes the three
+active queues within the 17-slot header table, sends variable-length commands,
+and receives messages/debug packets. Sizes and indices are in 32-bit words;
+packets are padded to four words. ARM64 uses full-system barriers around index
+publication. This requires coherent or uncached memory mapped into the GMU's
+address space; the code does not set up those mappings or cache maintenance.
+
+The host tests check literal ABI values, all 255 encoded message lengths at four
+ring positions, padding, wraparound, full/empty queues, incomplete packets,
+output capacity and corrupted indices. Local UndefinedBehaviorSanitizer tests
+pass. Firmware boot, interrupt/doorbell wiring, HFI feature negotiation,
+acknowledgement tracking and GPU context submission are still missing. The queue
+component is not linked into XNU or exposed as a working HakiosGPU device.
+
+```
+cc -std=c11 -Wall -Wextra -Werror -fsanitize=undefined \
+  devices/onyx/drivers/gpu/onyx_gen8_hfi.c \
+  devices/onyx/drivers/gpu/hfi_test.c -o /tmp/onyx-gen8-hfi-test
+/tmp/onyx-gen8-hfi-test
+```
+
+### Metal library baseline
+
 The checked-out Metal source needed `<algorithm>` in `src/fake_gpu.cpp` for
 `std::fill`. After that local fix, 259 tests passed with zero failed checks using
 Homebrew LLVM and its matching libc++ (Apple Clang rejects the upstream

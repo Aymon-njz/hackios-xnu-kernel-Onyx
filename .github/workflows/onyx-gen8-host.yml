@@ -16,3 +16,9 @@ jobs:
             devices/onyx/drivers/gpu/onyx_gen8_firmware.c \
             devices/onyx/drivers/gpu/firmware_test.c -o /tmp/onyx-gen8-firmware-test
           /tmp/onyx-gen8-firmware-test
+      - name: Validate HFI queues with sanitizers
+        run: |
+          clang -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g \
+            devices/onyx/drivers/gpu/onyx_gen8_hfi.c \
+            devices/onyx/drivers/gpu/hfi_test.c -o /tmp/onyx-gen8-hfi-test
+          /tmp/onyx-gen8-hfi-test
