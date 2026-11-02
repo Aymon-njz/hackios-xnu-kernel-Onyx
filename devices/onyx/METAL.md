@@ -142,6 +142,17 @@ preloaded `fw/gen80600_gmu.bin`, if present in a resident image. It issues no MM
 accesses or hardware doorbells. Missing firmware is reported and stops the check;
 no GPU power or acceleration is advertised. Normal boot does not run this check.
 
+`onyx_gpu_stage=2` instead waits 30 seconds and probes the Tuna GPU clock
+controller at `0x03d90000/0x9800`, reading source-derived CX power status and
+clock configuration registers. Every read has before/after console checkpoints.
+It issues no register writes and does not access GMU, 3D or GPU SMMU registers.
+Offsets come from `onyx-oss/konoha-kernel-gki` commit
+`d6b71af752d00499a238ceff5bab30592cc8d0a8`, `drivers/clk/qcom/gpucc-tuna.c`.
+For example, `0x9008` is CXO AON clock control here; CX GDSCR is `0x9080`.
+Neither SC7280 offsets nor a successful CPU queue test establish Onyx power
+state. This probe needs a real-device test; read-only MMIO has not yet been
+verified under this phone's firmware/hypervisor. It is not a graphics test.
+
 ```
 cc -std=c11 -Wall -Wextra -Werror -fsanitize=undefined -Ixnu/files/bsd/dev \
   devices/onyx/drivers/gpu/hakios.onyx_gen8_hfi.c \
