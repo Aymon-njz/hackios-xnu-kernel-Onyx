@@ -18,6 +18,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check kernel return geometry and capture decoding
+        run: |
+          cc -std=c11 -Wall -Wextra -Werror -fsanitize=undefined \
+            -Ixnu/files/osfmk/arm64 tools/loader-return-geometry-test.c \
+            -o /tmp/loader-return-geometry-test
+          /tmp/loader-return-geometry-test
+          python3 tools/read-onyx-capture-test.py
+
       - name: Install XNU build prerequisites
         run: |
           sudo apt-get update
@@ -61,6 +69,7 @@ jobs:
           test -s "$kernel"
           strings -a "$kernel" | grep -F 'build deferred-spi-20261101' >/dev/null
           strings -a "$kernel" | grep -F 'onyx-gen8: kernel-core-20261102' >/dev/null
+          strings -a "$kernel" | grep -F 'loader-return: private-ttbr0-20261102' >/dev/null
           sha256sum "$kernel"
 
       - name: Publish the Onyx kernel

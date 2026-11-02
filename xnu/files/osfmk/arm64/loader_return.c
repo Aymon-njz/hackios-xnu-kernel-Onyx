@@ -26,6 +26,7 @@
 #include <pexpert/arm64/board_config.h>
 #include <vm/vm_page.h>
 #include <vm/vm_compressor.h>
+#include <arm64/loader_return_geometry.h>
 
 /*
  * The console log handed back to the loader. A long session writes more than fits, and both
@@ -233,7 +234,7 @@ loader_jump(uint64_t reason, uint64_t code)
 {
 #if ARM_PGSHIFT == 12
 	uint64_t stub = loader_stub_slot[1];
-	uint64_t tcr, t0sz;
+	uint64_t tcr, return_tcr;
 	uint32_t own_core = 0;
 
 	if (stub == 0 || loader_return_entered) {
@@ -241,11 +242,12 @@ loader_jump(uint64_t reason, uint64_t code)
 	}
 
 	tcr = __builtin_arm_rsr64("TCR_EL1");
-	t0sz = tcr & 0x3f;
-	/* The TTBR0 walk must start at L1 (1 GB per entry) and reach the stub. */
-	if (t0sz < 25 || t0sz > 33 || (stub >> (64 - t0sz)) != 0) {
+	if (!loader_return_geometry(tcr, stub, &return_tcr)) {
+		kprintf("loader-return: stub %#llx is outside the private return mapping; return refused\n", stub);
 		return;
 	}
+	kprintf("loader-return: private-ttbr0-20261102 stub %#llx TCR %#llx -> %#llx\n",
+	    stub, tcr, return_tcr);
 	loader_return_entered = true;
 #if defined(GENERIC_GIC_V3_IRQ)
 	gic_v3_irq_quiesce();
@@ -265,6 +267,12 @@ loader_jump(uint64_t reason, uint64_t code)
 	loader_l2[(stub >> 21) & 0x1ff] = (stub & ~0x1fffffULL) | ARM_TTE_VALID | ARM_TTE_TYPE_BLOCK |
 	    ARM_TTE_BLOCK_AF | ARM_TTE_BLOCK_SH(SH_OUTER_MEMORY) | ARM_TTE_BLOCK_AP(AP_RWNA) |
 	    ARM_TTE_BLOCK_ATTRINDX(CACHE_ATTRINDX_WRITEBACK);
+	/* Make the new walk tables visible even when the outgoing TTBR0 walk
+	 * had different cache/shareability settings. They are not the user's tables. */
+	for (uintptr_t p = (uintptr_t)loader_l1; p < (uintptr_t)loader_l1 + sizeof(loader_l1); p += 64)
+		__asm__ volatile ("dc cvac, %0" : : "r" (p) : "memory");
+	for (uintptr_t p = (uintptr_t)loader_l2; p < (uintptr_t)loader_l2 + sizeof(loader_l2); p += 64)
+		__asm__ volatile ("dc cvac, %0" : : "r" (p) : "memory");
 
 	/*
 	 * The stub turns the MMU off, and on real hardware dirty cache lines do
@@ -289,7 +297,7 @@ loader_jump(uint64_t reason, uint64_t code)
 	register uint64_t r_ttbr0 __asm__("x0") = static_kvtophys(loader_l1);
 	register uint64_t r_log __asm__("x2") = static_kvtophys(loader_log);
 	register uint64_t r_len __asm__("x3") = loader_log_len;
-	register uint64_t r_tcr __asm__("x4") = tcr;
+	register uint64_t r_tcr __asm__("x4") = return_tcr;
 	register uint64_t r_stub __asm__("x5") = stub;
 	register uint64_t r_reason __asm__("x6") = reason;
 	register uint64_t r_code __asm__("x7") = code;
