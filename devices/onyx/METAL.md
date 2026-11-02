@@ -45,7 +45,20 @@ removed. Local copies reside in the original Onyx worktree under
 | `gen80600_gmu.bin` | `75b3282a40e5411a1c154f698b923a916d1a6c8336d0ada677feabb15155a80e` |
 
 These files come from installed vendor software; matching the original firmware
-release and locating the secure ZAP image still require verification.
+release still requires verification. The secure image was subsequently found on
+the logical ODM partition, mounted read-only as ext4 with journal replay disabled
+(`ro,noload`), and extracted to the same private local directory:
+
+* `gen80000_zap.mbn`: 12088 bytes, SHA-256
+  `c0d51e7248e4a88ee2f92c464425aedcd726a753286f67a497191593e9d8391a`.
+* It is ELF32 with three program headers. One loadable relocated segment has
+  file offset `0x1000`, physical/link address `0x1000`, size `0x3b4`; the hash
+  segment is at file offset `0x2000`, size `0xf38`. The file includes signatures
+  and must not simply be copied wholesale to a GPU code allocation.
+* The captured DT reserves `gpu_microcode_region@94e9a000` with size `0x2000`.
+  This inventory does not prove that XNU has reserved or can access that region.
+* KGSL uses GPU PAS ID 13, MDT loading and secure authentication/reset for this
+  image. Those secure-world operations have not been ported or executed here.
 
 * `drivers/gpu/hakios.adreno.c` is the older SC7280/Adreno 642L backend.
   It must not be enabled on Onyx by changing addresses alone.
