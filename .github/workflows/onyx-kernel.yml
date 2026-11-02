@@ -25,6 +25,9 @@ jobs:
             -o /tmp/loader-return-geometry-test
           /tmp/loader-return-geometry-test
           python3 tools/read-onyx-capture-test.py
+          cc -std=c11 -Wall -Wextra -Werror -fsanitize=undefined \
+            -Ixnu/files/bsd/dev tools/onyx-journal-policy-test.c -o /tmp/onyx-journal-policy-test
+          /tmp/onyx-journal-policy-test
 
       - name: Install XNU build prerequisites
         run: |
@@ -70,6 +73,7 @@ jobs:
           strings -a "$kernel" | grep -F 'build deferred-spi-20261101' >/dev/null
           strings -a "$kernel" | grep -F 'onyx-gen8: kernel-core-20261102' >/dev/null
           strings -a "$kernel" | grep -F 'loader-return: private-ttbr0-20261102' >/dev/null
+          strings -a "$kernel" | grep -F 'onyx-log: native snapshot' >/dev/null
           sha256sum "$kernel"
 
       - name: Publish the Onyx kernel

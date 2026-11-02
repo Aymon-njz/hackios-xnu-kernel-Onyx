@@ -15,8 +15,8 @@ driver UFS
 	file    bsd/dev/hakios.ufs.c
 	file    bsd/dev/hakios.ufshc.c
 	help    the phone's UFS flash: a block device for each GPT partition (ufs=1, ufs=2), and the UFS host controller
-	help    driven from the kernel (ufs_native=). THE ONLY CODE OF THE KERNEL THAT MAY WRITE TO THE PHONE
-	help    (ufs_write=1, the partition `darwin` only): see tools/provenance.allow
+	help    driven from the kernel (ufs_native=). Writes are limited to ufs_write=1's darwin data volume or
+	help    onyx_log_native=1's pinned existing Onyx diagnostic journal: see tools/provenance.allow
 
 driver VIRTIO_BLK
 	file    bsd/dev/hakios.virtio_blk.c

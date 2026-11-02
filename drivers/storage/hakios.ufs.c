@@ -1,7 +1,9 @@
 /*
  * The phone's storage: one block device and one character device for every GPT partition of its
- * UFS (/dev/ufs_NAME and /dev/rufs_NAME, NAME as the partition table has it). Read only, but for
- * the one place the data of Darwin lives (ufs_write=1, below).
+ * UFS (/dev/ufs_NAME and /dev/rufs_NAME, NAME as the partition table has it).
+ * These devices remain read only except for the data-volume option below.
+ * onyx_log_native=1 separately opts into an internal diagnostic snapshot writer
+ * confined to the pre-existing, pinned final 2 MiB journal of Onyx userdata.
  *
  * There is no UFS driver here, and none is needed. UEFI never exits on this port: Qualcomm's own
  * UFS driver (UFSDxe) has brought up the controller, its PHY, its clocks and power, and stays
@@ -61,6 +63,7 @@
 #include <libkern/crc.h>
 #include <vm/memory_types.h>
 #include "hakios.ufshc.h"
+#include "hakios.onyx_journal.h"
 
 extern vm_offset_t ml_io_map_unmappable(vm_offset_t phys_addr, vm_size_t size, unsigned int flags);
 extern void IOSleep(unsigned int milliseconds);
@@ -177,6 +180,7 @@ static bool ufs_native_mapped;
 static uint32_t ufs_native_luns;                /* how many units are mapped (LUN 0..n-1) */
 static volatile bool ufs_native_on;
 static uint64_t ufs_native_fallbacks, ufs_mailbox_refused;
+static void ufs_journal_start(void);
 
 static LCK_GRP_DECLARE(ufs_lck_grp, "hakios-ufs");
 static LCK_MTX_DECLARE(ufs_lock, &ufs_lck_grp);
@@ -675,6 +679,101 @@ ufs_write_restore(void)
 		ufs_write_out = false;
 	}
 	lck_mtx_unlock(&ufs_write_mtx);
+}
+
+/* Dedicated native capture, independent of the loader mailbox/return path.
+ * No writable device node is created. The exact known userdata geometry,
+ * LUN/GPT mapping and an existing journal signature are checked first. */
+extern size_t loader_log_snapshot(void *, size_t, uint32_t *);
+
+static int
+ufs_journal_chunk(uint64_t first, uint32_t block, const uint8_t *bytes, uint32_t length, uint8_t *verify)
+{
+	int error = ufshc_journal_write(first, first + block, bytes, length);
+	if (!error) error = ufshc_read(0, (first + block) * 4096, verify, length);
+	if (!error && memcmp(bytes, verify, length)) error = EIO;
+	return error;
+}
+
+static void
+ufs_journal_thread(__unused void *parameter, __unused wait_result_t result)
+{
+	uint64_t first = 0, sequence = 0;
+	unsigned matches = 0;
+	char identity[128] = { 0 };
+	uint8_t *body = NULL, *header = NULL, *verify = NULL;
+	delay_for_interval(5, NSEC_PER_SEC);
+	if (!ufs_ready || !ufs_native_on || !ufshc_available() ||
+	    !PE_parse_boot_argn("onyx_log_id", identity, sizeof(identity)) || !identity[0]) return;
+	identity[sizeof(identity) - 1] = 0;
+	for (uint32_t n = 0; n < ufs_parts; n++) {
+		if (strncmp((const char *)ufs_page->part[n].name, "userdata", 9)) continue;
+		if (ufs_page->part[n].block_size != 4096 ||
+		    ufs_page->part[n].blocks != ONYX_USERDATA_BYTES / 4096 ||
+		    ufs_page->part[n].start_lba != ONYX_USERDATA_START_LBA ||
+		    ufs_lun[n] != 0 || ufs_page->part[n].lun != 0 ||
+		    ufs_page->part[n].start_lba > UINT32_MAX - ONYX_USERDATA_BYTES / 4096 ||
+		    ufs_lun_offset[n] != ufs_page->part[n].start_lba * 4096) continue;
+		first = ufs_page->part[n].start_lba + ONYX_USERDATA_BYTES / 4096 - 512;
+		matches++;
+	}
+	if (matches != 1) {
+		printf("onyx-log: userdata geometry/mapping not uniquely verified; no writes\n");
+		return;
+	}
+	body = kalloc_data(ONYX_JOURNAL_BYTES - ONYX_JOURNAL_HEADER, Z_WAITOK | Z_ZERO);
+	header = kalloc_data(4096, Z_WAITOK | Z_ZERO);
+	verify = kalloc_data(65536, Z_WAITOK | Z_ZERO);
+	if (!body || !header || !verify) goto done;
+	if (ufshc_read(0, first * 4096, header, 4096) ||
+	    (memcmp(header, "== XNULOADER v3 ==", sizeof("== XNULOADER v3 ==") - 1) &&
+	     memcmp(header, "ONYXLOG1", 8))) {
+		printf("onyx-log: existing journal signature missing; no writes\n");
+		goto done;
+	}
+	for (;;) {
+		uint32_t flags = 0;
+		size_t length = loader_log_snapshot(body, ONYX_JOURNAL_BYTES - ONYX_JOURNAL_HEADER, &flags);
+		if (!length) { delay_for_interval(30, NSEC_PER_SEC); continue; }
+		uint32_t padded = ((uint32_t)length + 4095) & ~4095u;
+		bzero(body + length, padded - length);
+		int error = 0;
+		for (uint32_t at = 0; at < padded && !error; at += 65536) {
+			uint32_t chunk = padded - at < 65536 ? padded - at : 65536;
+			error = ufs_journal_chunk(first, 1 + at / 4096, body + at, chunk, verify);
+		}
+		/* Commit the header last. A torn/interrupted update is rejected by
+		 * the host's header and payload CRC checks, not mistaken for old data. */
+		if (!error) {
+			bzero(header, 4096);
+			memcpy(header, "ONYXLOG1", 8);
+			uint32_t version = 1, size = 4096, crc = onyx_journal_crc(body, length), state = 1 | flags << 1;
+			uint64_t payload = length, seq = ++sequence, ticks = mach_absolute_time();
+			memcpy(header + 8, &version, 4); memcpy(header + 12, &size, 4);
+			memcpy(header + 16, &seq, 8); memcpy(header + 24, &payload, 8);
+			memcpy(header + 32, &crc, 4); memcpy(header + 36, &state, 4);
+			memcpy(header + 40, identity, sizeof(identity)); memcpy(header + 176, &ticks, 8);
+			crc = onyx_journal_crc(header, 4096); memcpy(header + 168, &crc, 4);
+			error = ufs_journal_chunk(first, 0, header, 4096, verify);
+		}
+		printf("onyx-log: native snapshot %llu bytes %lu status %d (readback verified when zero)\n",
+		    sequence, (unsigned long)length, error);
+		if (error) break; /* do not keep ringing after a storage error */
+		delay_for_interval(sequence < 6 ? 10 : 30, NSEC_PER_SEC);
+	}
+done:
+	if (body) kfree_data(body, ONYX_JOURNAL_BYTES - ONYX_JOURNAL_HEADER);
+	if (header) kfree_data(header, 4096);
+	if (verify) kfree_data(verify, 65536);
+}
+
+static void
+ufs_journal_start(void)
+{
+	int enabled = 0;
+	thread_t thread;
+	if (!PE_parse_boot_argn("onyx_log_native", &enabled, sizeof(enabled)) || enabled != 1) return;
+	if (kernel_thread_start(ufs_journal_thread, NULL, &thread) == KERN_SUCCESS) thread_deallocate(thread);
 }
 
 /* ---- the data volume: darwin from UFS_WRITE_FIRST on ---- */
@@ -1873,6 +1972,7 @@ hakios_ufs_init(void)
 			}
 			printf("ufs: the partitions (LUN 0-%u) are read by this kernel's own UFS driver, its list in the "
 			    "controller (kern.hakios.ufs_native=0: through the loader)\n", ufs_native_luns - 1);
+			ufs_journal_start();
 		} else {
 			printf("ufs: this kernel's own UFS driver is not used: through the loader\n");
 		}

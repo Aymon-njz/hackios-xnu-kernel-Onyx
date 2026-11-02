@@ -45,6 +45,7 @@ extern void gic_v3_irq_cpu_shutdown(void);
 
 void loader_log_putc(char c);
 void loader_return(void);
+size_t loader_log_snapshot(void *buffer, size_t capacity, uint32_t *flags);
 extern void hakios_adreno_quiesce(void);
 extern void hakios_adreno_stop(void);
 extern void hakios_adreno_minute(void);
@@ -334,6 +335,64 @@ struct msgbuf {
 	char *msg_bufc;         /* buffer */
 };
 extern struct msgbuf *msgbufp;
+
+static void
+snapshot_copy(uint8_t *dst, size_t *used, size_t capacity, const void *source, size_t length)
+{
+	if (length > capacity - *used) length = capacity - *used;
+	__builtin_memcpy(dst + *used, source, length);
+	*used += length;
+}
+
+/* A live snapshot for the bounded Onyx journal. Unlike linearize(), this
+ * leaves the console ring running. No storage I/O happens under its lock. */
+size_t
+loader_log_snapshot(void *buffer, size_t capacity, uint32_t *flags)
+{
+	uint8_t *dst = buffer;
+	size_t used = 0;
+	uint64_t daif;
+	if (!buffer || !capacity || !flags) return 0;
+	*flags = 0;
+	daif = __builtin_arm_rsr64("DAIF");
+	__builtin_arm_wsr("DAIFSet", DAIFSC_IRQF | DAIFSC_FIQF);
+	if (!os_atomic_cmpxchg(&loader_log_lock, 0, 1, acquire)) {
+		__builtin_arm_wsr64("DAIF", daif);
+		return 0;
+	}
+	if (loader_log_wrapped && !loader_log_linear) {
+		static const char note[] = "\n[console middle dropped; first 256 KiB and last 1 MiB follow]\n";
+		*flags |= 1;
+		snapshot_copy(dst, &used, capacity, note, sizeof(note) - 1);
+		snapshot_copy(dst, &used, capacity, loader_log, LOADER_LOG_HEAD);
+		snapshot_copy(dst, &used, capacity, loader_log + LOADER_LOG_HEAD + loader_log_ring_at,
+		    LOADER_LOG_RING - loader_log_ring_at);
+		snapshot_copy(dst, &used, capacity, loader_log + LOADER_LOG_HEAD, loader_log_ring_at);
+	} else {
+		snapshot_copy(dst, &used, capacity, loader_log,
+		    loader_log_len < LOADER_LOG_SIZE ? loader_log_len : LOADER_LOG_SIZE);
+	}
+	os_atomic_store(&loader_log_lock, 0, release);
+	__builtin_arm_wsr64("DAIF", daif);
+	struct msgbuf *mb = msgbufp;
+	if (mb && mb->msg_bufc && mb->msg_size > 0 && mb->msg_size <= 1024 * 1024) {
+		int write = mb->msg_bufx;
+		if (write >= 0 && write <= mb->msg_size) {
+			static const char note[] = "\n--- live kernel message buffer snapshot ---\n";
+			snapshot_copy(dst, &used, capacity, note, sizeof(note) - 1);
+			for (int pass = 0; pass < 2; pass++) {
+				int begin = pass ? 0 : write, end = pass ? write : mb->msg_size;
+				for (int n = begin; n < end; n++) {
+					char c = mb->msg_bufc[n];
+					if (c && used < capacity) dst[used++] = (uint8_t)c;
+					else if (c) *flags |= 2;
+				}
+			}
+		}
+	}
+	if (used == capacity) *flags |= 2;
+	return used;
+}
 
 static void
 loader_log_puts(const char *s)

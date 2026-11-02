@@ -44,5 +44,45 @@ Embedded NULs in the kernel body are preserved. A padded initial header followed
 by old data is refused. "Capture unavailable" is a failed capture, not an empty
 kernel log or proof that the GPU probe never ran. Keep the raw journal for audit.
 
-No native SCSI write commands, new raw-write interfaces, or changes to the
-working loader/UEFI are introduced by this patch.
+## Live native snapshots (new path, requires hardware validation)
+
+The timed return test still reset to stock fastboot without persisting a kernel
+log. The alternative `onyx_log_native=1 onyx_log_id=UNIQUE_ID` writes while XNU
+runs, without returning to UEFI. It introduces an internal native WRITE(10)
+exception; ordinary storage slots/devices still refuse writes.
+
+Recovery verified userdata starts at sector 24997888 (512-byte units), or LUN-0
+4096-byte LBA 3124736, and is 249517027328 bytes long. The only permitted write
+range is absolute LUN-0 LBA **64041467 through 64041978**, the same final 2 MiB
+journal already used by the loader. Any change to its start, size, block size,
+LUN, native/GPT mapping or existing journal signature disables this writer.
+No new writable device or ioctl is exposed. Per-slot checks require the exact
+command/tag/LBA/count and FUA flag before placement, after placement, and before
+ringing. Each chunk is read back and compared. A storage error stops logging.
+
+The first snapshot is attempted five seconds after native UFS becomes ready,
+then every ten seconds for six captures and every thirty seconds thereafter.
+It captures the existing loader-console head/tail ring and the kernel message
+buffer; it does not capture every process's private/unified logs. Infinite log
+history cannot fit into 2 MiB. The header flags report when console history has
+wrapped or snapshot capacity was reached. This is not a panic handler and an
+instant reset can lose messages since the last successful snapshot.
+
+The on-disk `ONYXLOG1` header is 4096 bytes: version/header length at 8/12,
+sequence/payload length at 16/24, payload CRC32/flags at 32/36, a 128-byte
+NUL-terminated run identity at 40, header CRC32 at 168 (calculated with this
+field zero), and kernel uptime ticks at 176. Integer fields are little-endian.
+Flag 1 marks a committed capture, flag 2 means the console ring wrapped, flag 4
+means capacity was reached. The payload follows. Body chunks are written and
+verified before the header is committed. A reset during an update can invalidate
+the previous capture; the CRC checks must reject it. This is a single bounded
+snapshot slot, not an atomic or unlimited logging filesystem.
+
+Read the complete journal from recovery as above, then:
+
+```
+python3 tools/read-onyx-capture.py journal.bin --run-id onyx_log_id=UNIQUE_ID > kernel.log
+```
+
+The native reader validates both CRCs, the bounds and the exact identity. No
+changes to the working loader/UEFI or general filesystem write access are made.

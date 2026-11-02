@@ -19,7 +19,11 @@
  * touched; IS and UTRLCNR are only read. UTRLCLR is written only to clear this kernel's own
  * slots when they do not finish at the end.
  *
- * Read only by construction: a command is made in a buffer of its own, and only one that passes
+ * Normal storage remains read only. An explicit onyx_log_native=1 additionally
+ * allows an internal, slot-bound FUA WRITE(10) into the pinned Onyx journal
+ * range (hakios.onyx_journal.h), after userdata inventory/signature checks and
+ * with readback verification. No write device or userspace ioctl is exposed.
+ * A command is made in a buffer of its own, and only one that passes
  * ufshc_permitted() is ever written into a slot; what the slot then holds is read back and must
  * be the same and pass again before the doorbell is rung. The whitelist checks three things of
  * every command: the SCSI operation (READ(10)/READ(16), TEST UNIT READY, REQUEST SENSE, INQUIRY,
@@ -64,6 +68,7 @@
 #include <vm/vm_kern.h>
 #include <vm/memory_types.h>
 #include "hakios.ufshc.h"
+#include "hakios.onyx_journal.h"
 
 extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 extern vm_offset_t ml_io_map_unmappable(vm_offset_t phys_addr, vm_size_t size, unsigned int flags);
@@ -109,7 +114,7 @@ extern boolean_t ml_set_interrupts_enabled(boolean_t enable);
 #define UTRD_CT_UFS         (1u << 28)
 #define UTRD_DD_MASK        (3u << 25)
 #define UTRD_DD_NONE        (0u << 25)
-#define UTRD_DD_OUT         (1u << 25)          /* host to device: never */
+#define UTRD_DD_OUT         (1u << 25)          /* only the opt-in bounded Onyx journal writer */
 #define UTRD_DD_IN          (2u << 25)
 #define OCS_SUCCESS         0x0
 #define OCS_INVALID         0xf
@@ -142,6 +147,8 @@ struct hc_slot {
 	uint64_t ucd_pa;
 	uint8_t *data;                          /* this kernel's memory, cached */
 	uint64_t data_pa;
+	bool journal_write;
+	uint32_t journal_lba, journal_blocks;
 };
 
 static vm_offset_t hc;                          /* the registers */
@@ -311,8 +318,10 @@ hc_refusal(const uint8_t *upiu, uint32_t dw0, uint32_t lun_mask, bool any_comman
 }
 
 static bool
-ufshc_permitted(const uint8_t *upiu, uint32_t dw0)
+ufshc_permitted(const struct hc_slot *slot, const uint8_t *upiu, uint32_t dw0)
 {
+	if (slot->journal_write)
+		return onyx_journal_command(upiu, dw0, slot->journal_lba, slot->journal_blocks, slot->number);
 	const char *why = hc_refusal(upiu, dw0, hc_lun_mask, false);
 
 	if (why == NULL) {
@@ -478,7 +487,7 @@ hc_place(struct hc_slot *s, const struct hc_cmd *c, uint32_t bytes)
 {
 	uint32_t n = 0, back[8];
 
-	if (!ufshc_permitted(c->upiu, c->dw0)) {
+	if (!ufshc_permitted(s, c->upiu, c->dw0)) {
 		return EPERM;
 	}
 	hc_put(s->ucd, c->upiu, sizeof(c->upiu));
@@ -508,7 +517,7 @@ hc_place(struct hc_slot *s, const struct hc_cmd *c, uint32_t bytes)
 		back[i] = s->ucd[i];
 	}
 	if (memcmp(back, c->upiu, sizeof(back)) != 0 || s->utrd[0] != c->dw0 ||
-	    !ufshc_permitted((const uint8_t *)back, s->utrd[0])) {
+	    !ufshc_permitted(s, (const uint8_t *)back, s->utrd[0])) {
 		hc_say("ufs: native: slot %u does not hold what was put in it: not rung\n", s->number);
 		hc_refused++;
 		return EPERM;
@@ -529,6 +538,12 @@ hc_ring(struct hc_slot *s)
 	ok = hc_in && !hc_closed && !hc_dead && *hc_loader.take_back == 0 &&
 	    hc_read(UFSHC_UTRLBA) == hc_list_lo && hc_read(UFSHC_UTRLBAU) == hc_list_hi &&
 	    (hc_read(UFSHC_UTRLRSR) & 1) != 0 && (hc_read(UFSHC_UTRLDBR) & bit) == 0;
+	if (ok && s->journal_write) {
+		uint32_t command[8];
+		for (unsigned n = 0; n < 8; n++) command[n] = s->ucd[n];
+		ok = onyx_journal_command((const uint8_t *)command, s->utrd[0],
+		    s->journal_lba, s->journal_blocks, s->number);
+	}
 	if (ok) {
 		hc_write(UFSHC_UTRLDBR, bit);
 	}
@@ -723,6 +738,7 @@ hc_take(bool wait)
 
 		hc_free &= ~(1u << i);
 		s = &hc_slots[i];
+		s->journal_write = false;
 		f = ++hc_in_flight;
 		if (f > hc_most_in_flight) {
 			hc_most_in_flight = f;
@@ -737,6 +753,7 @@ static void
 hc_give(struct hc_slot *s)
 {
 	lck_mtx_lock(&hc_lock);
+	s->journal_write = false;
 	hc_free |= 1u << (s - hc_slots);
 	hc_in_flight--;
 	wakeup(&hc_free);
@@ -840,6 +857,40 @@ ufshc_read(uint8_t lun, uint64_t offset, uint8_t *dst, uint64_t len)
 			head++;
 		}
 	}
+	return error;
+}
+
+/* Only the diagnostic journal uses writes. The public block devices and
+ * ordinary read slots still reject every write. The caller supplies a range
+ * established from the exact Onyx userdata inventory; no userspace ioctl or
+ * general native-write API is exposed. Writes are FUA and sequential here. */
+int
+ufshc_journal_write(uint64_t first, uint64_t lba, const uint8_t *data, uint32_t bytes)
+{
+	int enabled = 0;
+	if (!PE_parse_boot_argn("onyx_log_native", &enabled, sizeof(enabled)) || enabled != 1)
+		return EROFS;
+	if (!data || !bytes || bytes % BLOCK || bytes > hc_slot_buffer ||
+	    !onyx_journal_span(first, lba, bytes / BLOCK)) return EINVAL;
+	if (!hc_usable || !hc_in || hc_dead || hc_closed || !(hc_lun_mask & 1)) return ENXIO;
+	struct hc_slot *slot = hc_take(false);
+	if (!slot) return EBUSY;
+	struct hc_cmd command;
+	uint32_t blocks = bytes / BLOCK;
+	hc_make_read(&command, 0, (uint8_t)slot->number, (uint32_t)lba, blocks);
+	command.upiu[1] = UPIU_FLAG_WRITE;
+	command.upiu[16] = 0x2a;
+	command.upiu[17] = 8; /* FUA: commit this command before reporting completion */
+	command.dw0 = UTRD_CT_UFS | UTRD_DD_OUT;
+	slot->journal_lba = (uint32_t)lba;
+	slot->journal_blocks = blocks;
+	slot->journal_write = true;
+	memcpy(slot->data, data, bytes);
+	FlushPoC_DcacheRegion((vm_offset_t)slot->data, bytes);
+	int error = hc_place(slot, &command, bytes);
+	if (!error) error = hc_ring(slot);
+	if (!error) error = hc_complete(slot, "Onyx diagnostic journal WRITE(10) FUA", false);
+	if (error != ETIMEDOUT) hc_give(slot);
 	return error;
 }
 

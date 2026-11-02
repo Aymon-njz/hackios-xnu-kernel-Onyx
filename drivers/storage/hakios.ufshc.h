@@ -26,6 +26,8 @@ int ufshc_switch_in(bool prove);
 int ufshc_switch_out(const char *why);
 bool ufshc_list_in(void);
 int ufshc_read(uint8_t lun, uint64_t offset, uint8_t *dst, uint64_t len);
+/* Internal diagnostic writer; not a general writable block interface. */
+int ufshc_journal_write(uint64_t first, uint64_t lba, const uint8_t *src, uint32_t bytes);
 void ufshc_report(const char *when);
 void hakios_ufs_quiesce(void);
 
