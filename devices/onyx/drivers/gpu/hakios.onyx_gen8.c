@@ -35,7 +35,7 @@ static void onyx_gpu_mmio_wait(__unused void *context, unsigned microseconds)
 	delay_for_interval(microseconds, NSEC_PER_USEC);
 }
 
-static void onyx_gen8_power_test(void)
+static void onyx_gen8_power_test(unsigned stage)
 {
 	int enabled = 0, cpus = 0, native = 0;
 	uint32_t bootcpu;
@@ -101,6 +101,14 @@ static void onyx_gen8_power_test(void)
 	enum onyx_cx_result result = onyx_gen8_cx_enable(&gio, 1, &saved);
 	printf("onyx-gen8: CX power status %u saved GDSCR %#x readback %#x\n",
 	    (unsigned)result, saved, gio.read(gio.context, 0x9080));
+	if (stage >= 6 && result == ONYX_CX_OK) {
+		printf("onyx-gen8: before GMU/HUB TCXO clock setup; no firmware start\n");
+		enum onyx_clock_result clock_result = onyx_gen8_clocks_tcxo(&gio);
+		printf("onyx-gen8: GMU/HUB clock result %u quarantined %u\n", (unsigned)clock_result, gio.quarantined);
+		static const uint32_t offsets[] = { 0x9318, 0x931c, 0x93ec, 0x93f0, 0x90d4, 0x90e4, 0x90e8, 0x90bc };
+		for (unsigned n = 0; n < sizeof(offsets) / sizeof(offsets[0]); n++)
+			printf("onyx-gen8: clock offset %#x readback %#x\n", offsets[n], gio.read(gio.context, offsets[n]));
+	}
 	printf("onyx-gen8: power test stopped; no GMU firmware boot, GPU work or Metal acceleration\n");
 }
 
@@ -219,8 +227,8 @@ onyx_gen8_validate(void *parameter, __unused wait_result_t result)
 	size_t count = 0;
 	uint32_t command[] = { 0x20e, 0 }; /* CORE_FW_START wire shape, not sent to hardware */
 	delay_for_interval(30, NSEC_PER_SEC);
-	if ((uintptr_t)parameter == 5) {
-		onyx_gen8_power_test();
+	if ((uintptr_t)parameter == 5 || (uintptr_t)parameter == 6) {
+		onyx_gen8_power_test((unsigned)(uintptr_t)parameter);
 		return;
 	}
 	if ((uintptr_t)parameter == 3) {
@@ -270,7 +278,7 @@ onyx_gen8_init(void)
 {
 	int stage = 0;
 	thread_t thread;
-	if (!PE_parse_boot_argn("onyx_gpu_stage", &stage, sizeof(stage)) || stage < 1 || stage > 5) return;
+	if (!PE_parse_boot_argn("onyx_gpu_stage", &stage, sizeof(stage)) || stage < 1 || stage > 6) return;
 	if (kernel_thread_start(onyx_gen8_validate, (void *)(uintptr_t)stage, &thread) == KERN_SUCCESS)
 		thread_deallocate(thread);
 }

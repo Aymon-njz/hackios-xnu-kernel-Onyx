@@ -91,6 +91,18 @@ are logged into the live diagnostic journal. Host tests cover the captured
 retained ldob5 request, IRQ/state preservation, conflicting/incomplete commands,
 supplies gate, already-on/HW-controlled domains, rejected writes and timeouts.
 
+`onyx_gpu_stage=6 onyx_gpu_power=1` additionally configures HUB and GMU root
+clocks from TCXO using source 0 and HID=1 (divide by 1). No PLL is programmed.
+The roots are forced on and updated with bounded status polling, then CXO AON,
+CXO, HUB AON, HUB CX INT, AHB and CX GMU branches are enabled. Bit 31 clock-off
+status must clear except on AHB, for which Tuna specifies BRANCH_HALT_DELAY.
+Host tests cover busy roots, rejected configs and root/branch timeout rollback.
+On failure request fields are restored best-effort and the adapter quarantined.
+CX/rail requests stay as for stage 5 until reboot. On success the test logs clock
+readbacks and stops: 19.2 MHz is an initial clock-access diagnostic, not the final
+500 MHz GMU / 200 MHz HUB firmware operating point. No GMU firmware, secure
+authentication or GPU job is attempted. This stage still requires a hardware test.
+
 The SM8735 module source was located at
 `crdroidandroid/android_kernel_xiaomi_sm8735-modules`, commit
 `8500748dae32f10507c02f1c94bc971553cb525b`.

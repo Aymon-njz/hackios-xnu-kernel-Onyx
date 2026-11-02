@@ -14,6 +14,16 @@ enum onyx_cx_result {
 enum onyx_cx_result onyx_gen8_cx_enable(struct onyx_rsc_io *gpucc,
     unsigned supplies_ready, uint32_t *saved_gdscr);
 
+enum onyx_clock_result {
+	ONYX_CLOCK_OK, ONYX_CLOCK_ARGUMENT, ONYX_CLOCK_CX_OFF,
+	ONYX_CLOCK_READBACK, ONYX_CLOCK_TIMEOUT
+};
+/* Configure GMU/HUB roots from TCXO at 19.2 MHz, then open CX branches.
+ * No PLL or GX programming. This is an access-test frequency, not the final
+ * GMU firmware operating point. On success clocks stay on until reboot.
+ * On failure saved request fields are restored best-effort and quarantined. */
+enum onyx_clock_result onyx_gen8_clocks_tcxo(struct onyx_rsc_io *gpucc);
+
 enum onyx_gen8_power_missing {
 	ONYX_CX_OFF = 1u << 0,
 	ONYX_CX_COLLAPSED = 1u << 1,

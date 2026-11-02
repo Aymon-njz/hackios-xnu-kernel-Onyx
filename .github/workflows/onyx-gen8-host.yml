@@ -11,6 +11,12 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - name: Validate GMU clock setup and rollback paths
+        run: |
+          clang -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \
+            -Ixnu/files/bsd/dev devices/onyx/drivers/gpu/hakios.onyx_gen8_power.c \
+            tools/onyx-gmu-clock-test.c -o /tmp/onyx-gmu-clock-test
+          /tmp/onyx-gmu-clock-test
       - name: Validate CX power-on failure and rollback paths
         run: |
           clang -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \
