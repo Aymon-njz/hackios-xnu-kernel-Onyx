@@ -107,6 +107,8 @@ static void onyx_gen8_power_test(unsigned stage)
 		enum onyx_clock_result clock_result = onyx_gen8_clocks_tcxo(&gio, &trace);
 		printf("onyx-gen8: clock check phase %u offset %#x mask %#x expected %#x observed %#x (before rollback)\n",
 		    trace.phase, trace.offset, trace.mask, trace.expected, trace.observed);
+		printf("onyx-gen8: non-echoing branch requests %#x always-on requests %#x; status checks do not prove GMU execution\n",
+		    trace.unlatched_branches, trace.unlatched_aon);
 		printf("onyx-gen8: GMU/HUB clock result %u quarantined %u\n", (unsigned)clock_result, gio.quarantined);
 		static const uint32_t offsets[] = { 0x9318, 0x931c, 0x93ec, 0x93f0, 0x90d4, 0x90e4, 0x90e8, 0x90bc, 0x93a4, 0x9008, 0x93a8, 0x9004, 0x90cc, 0x9000 };
 		for (unsigned n = 0; n < sizeof(offsets) / sizeof(offsets[0]); n++)

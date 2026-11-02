@@ -23,7 +23,12 @@ enum onyx_clock_result {
  * On failure saved request fields are restored best-effort and quarantined. */
 /* Last checked register, captured before rollback. phase: 1=config,
  * 2=root update, 3=branch vote, 4=branch halt, 5=always-on request. */
-struct onyx_clock_trace { uint32_t phase, offset, mask, expected, observed; };
+struct onyx_clock_trace {
+	uint32_t phase, offset, mask, expected, observed;
+	/* Request bits that did not echo. These are diagnostics, not proof of
+	 * running clocks; stock uses branch halt/FSM status instead. */
+	uint32_t unlatched_branches, unlatched_aon;
+};
 enum onyx_clock_result onyx_gen8_clocks_tcxo(struct onyx_rsc_io *gpucc,
     struct onyx_clock_trace *trace);
 

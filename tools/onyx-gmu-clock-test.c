@@ -66,10 +66,19 @@ int main(void)
 	assert(trace.phase == 4 && trace.offset == 0x90d4 && trace.observed & 0x80000000u);
 	for (unsigned n = 0; n < 5; n++) assert(!(f.r[expected_aon[n] / 4] & 1));
 	reset(&f); io.quarantined = 0; f.reject = 0x9008;
+	assert(onyx_gen8_clocks_tcxo(&io, &trace) == ONYX_CLOCK_OK && !io.quarantined);
+	assert(trace.unlatched_aon == 2);
+	reset(&f); f.reject = 0x93e8; f.r[0x93e8 / 4] = 0;
+	assert(onyx_gen8_clocks_tcxo(&io, &trace) == ONYX_CLOCK_OK);
+	assert(trace.unlatched_branches == 2);
+	reset(&f); f.reject = 0x93e8;
+	assert(onyx_gen8_clocks_tcxo(&io, &trace) == ONYX_CLOCK_TIMEOUT && io.quarantined);
+	assert(trace.offset == 0x93e8 && trace.phase == 4);
+	reset(&f); io.quarantined = 0; f.reject = 0x93e8; f.r[0x93e8 / 4] = 0xa0000000;
+	assert(onyx_gen8_clocks_tcxo(&io, &trace) == ONYX_CLOCK_OK); /* FSM ON */
+	reset(&f); f.reject = 0x90bc;
 	assert(onyx_gen8_clocks_tcxo(&io, &trace) == ONYX_CLOCK_READBACK && io.quarantined);
-	assert(trace.phase == 5 && trace.offset == 0x9008 && trace.observed == 0);
-	assert(!(f.r[0x90d4 / 4] & 1));
-	for (unsigned n = 0; n < 5; n++) assert(!(f.r[expected_aon[n] / 4] & 1));
+	assert(trace.offset == 0x90bc && trace.phase == 3);
 	unsigned writes = f.writes;
 	assert(onyx_gen8_clocks_tcxo(&io, &trace) == ONYX_CLOCK_ARGUMENT && f.writes == writes);
 	puts("GMU TCXO clocks: success, CX/ownership gates, update busy, rejected config, root/branch timeouts and rollback passed");

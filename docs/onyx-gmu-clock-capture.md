@@ -50,3 +50,27 @@ This addresses an incomplete/misordered prerequisite sequence, not a proven
 physical cause of the non-latching 0x9008 vote. It cannot establish GMU readiness
 without a new hardware capture. Tests include stock write order, rollback of
 all prerequisites and persistent 0x9008 rejection (still refused, not ignored).
+
+## Stock-driver comparison after HUB failure
+
+Recovery on the same phone accepted `clk_prepare_enable=1` for
+`gpu_cc_hub_aon_clk`, while `clk_print_regs` still reported CBCR 0. The logical
+request count read 1; it was returned to 0 afterward. Raw output is retained in
+`out/logs/stock-hub-clock/enable-test.txt`. This experiment does not measure a
+clock waveform or prove a running GMU.
+
+The kernel's stock `clk_branch2_check_halt` accepts CLK_OFF clear OR NOC FSM
+status 2. It does not require bit0 readback after the write. The XNU helper now
+uses that bounded status condition for the polled Tuna branches and reports
+non-echoing bit0 requests in separate masks (branch order CXO,HUB_AON,HUB_CX_INT,
+AHB,CX_GMU; always-on order CB,CXO_AON,RSCC_HUB_AON,RSCC_XO_AON,SLEEP).
+AHB retains its stricter request check because it has only a delay contract.
+Always-on controls are written as in stock and non-echoing values are logged,
+not classified as a halt failure. Root config checks, bounded waits,
+quarantine and rollback remain. No firmware boot is enabled by this change.
+A zero register can satisfy stock status semantics; this is explicitly not
+independent proof of physical clock activity or accessibility of GMU registers.
+
+Tests cover a non-echoing HUB request with CLK_OFF clear, a rejected request
+with CLK_OFF set (must time out), FSM ON despite CLK_OFF, a rejected AHB request
+(must fail), and non-echoing always-on requests with diagnostic masks.

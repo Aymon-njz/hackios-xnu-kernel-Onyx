@@ -9,6 +9,21 @@ static int clock_wait(struct onyx_rsc_io *io, uint32_t at, uint32_t mask, uint32
 	return 0;
 }
 
+static int branch_running(uint32_t value)
+{
+	/* Stock clk_branch2_check_halt: CLK_OFF clear OR NOC FSM status ON. */
+	return !(value & 0x80000000u) || ((value >> 28) & 7) == 2;
+}
+
+static int branch_wait(struct onyx_rsc_io *io, uint32_t at)
+{
+	for (unsigned us = 0; us < 2000; us += 10) {
+		if (branch_running(io->read(io->context, at))) return 1;
+		io->delay_us(io->context, 10);
+	}
+	return 0;
+}
+
 enum onyx_clock_result
 onyx_gen8_clocks_tcxo(struct onyx_rsc_io *io, struct onyx_clock_trace *trace)
 {
@@ -22,7 +37,8 @@ onyx_gen8_clocks_tcxo(struct onyx_rsc_io *io, struct onyx_clock_trace *trace)
 	uint32_t old_cmd[2], old_cfg[2], old_branch[5], old_aon[5];
 	unsigned roots_touched = 0, branches_touched = 0, aon_touched = 0;
 	enum onyx_clock_result result = ONYX_CLOCK_READBACK;
-	struct onyx_clock_trace local = {0, 0, 0, 0, 0};
+	struct onyx_clock_trace local = {0};
+	uint32_t unlatched_branches = 0, unlatched_aon = 0;
 	if (!trace) trace = &local;
 	*trace = local;
 	if (!io || !io->read || !io->write || !io->delay_us || !io->owned || io->quarantined)
@@ -37,8 +53,9 @@ onyx_gen8_clocks_tcxo(struct onyx_rsc_io *io, struct onyx_clock_trace *trace)
 	for (unsigned n = 0; n < 5; n++) old_branch[n] = io->read(io->context, branches[n]);
 	for (unsigned n = 0; n < 5; n++) old_aon[n] = io->read(io->context, aon[n]);
 	/* Follow the stock always-on prerequisite order before roots/branches.
-	 * Preserve all unrelated fields. Record but defer bit0 checks until the
-	 * complete prerequisite sequence has settled; no undefined halt polling. */
+	 * Preserve all unrelated fields. Record bit0 readback after the
+	 * complete sequence; stock does not require these request bits to echo.
+	 * There is no defined halt polling contract for these controls. */
 	for (unsigned n = 0; n < 5; n++) {
 		aon_touched = n + 1;
 		io->write(io->context, aon[n], old_aon[n] | 1u);
@@ -49,12 +66,12 @@ onyx_gen8_clocks_tcxo(struct onyx_rsc_io *io, struct onyx_clock_trace *trace)
 		roots_touched = n + 1;
 		io->write(io->context, roots[n], (old_cmd[n] & ~1u) | 2u);
 		io->write(io->context, roots[n] + 4, config);
-		*trace = (struct onyx_clock_trace){1, roots[n] + 4, 0x71f, 1,
+		*trace = (struct onyx_clock_trace){.phase=1, .offset=roots[n] + 4, .mask=0x71f, .expected=1, .observed=
 		    io->read(io->context, roots[n] + 4)};
 		if ((trace->observed & trace->mask) != trace->expected) goto rollback;
 		io->write(io->context, roots[n], io->read(io->context, roots[n]) | 3u);
 		if (!clock_wait(io, roots[n], 1u | (1u << 31), 0)) {
-			*trace = (struct onyx_clock_trace){2, roots[n], 0x80000001u, 0,
+			*trace = (struct onyx_clock_trace){.phase=2, .offset=roots[n], .mask=0x80000001u, .expected=0, .observed=
 			    io->read(io->context, roots[n])};
 			result = ONYX_CLOCK_TIMEOUT; goto rollback;
 		}
@@ -62,25 +79,31 @@ onyx_gen8_clocks_tcxo(struct onyx_rsc_io *io, struct onyx_clock_trace *trace)
 	for (unsigned n = 0; n < 5; n++) {
 		branches_touched = n + 1;
 		io->write(io->context, branches[n], old_branch[n] | 1u);
-		*trace = (struct onyx_clock_trace){3, branches[n], 1, 1,
+		*trace = (struct onyx_clock_trace){.phase=3, .offset=branches[n], .mask=1, .expected=1, .observed=
 		    io->read(io->context, branches[n])};
-		if (!(trace->observed & 1)) goto rollback;
+		if (!(trace->observed & 1)) unlatched_branches |= 1u << n;
+		/* AHB has no status bit contract: retain strict request checking. */
+		if (branches[n] == 0x90bc && !(trace->observed & 1)) goto rollback;
 		/* Tuna AHB uses BRANCH_HALT_DELAY. Other branches have bit31
 		 * status; do not treat vote=running. */
 		if (branches[n] == 0x90bc) io->delay_us(io->context, 10);
-		else if (!clock_wait(io, branches[n], 1u << 31, 0)) {
-			*trace = (struct onyx_clock_trace){4, branches[n], 0x80000000u, 0,
+		else if (!branch_wait(io, branches[n])) {
+			*trace = (struct onyx_clock_trace){.phase=4, .offset=branches[n], .mask=0x80000000u, .expected=0, .observed=
 			    io->read(io->context, branches[n])};
 			result = ONYX_CLOCK_TIMEOUT; goto rollback;
 		}
 	}
 	for (unsigned n = 0; n < 5; n++) {
-		*trace = (struct onyx_clock_trace){5, aon[n], 1, 1,
+		*trace = (struct onyx_clock_trace){.phase=5, .offset=aon[n], .mask=1, .expected=1, .observed=
 		    io->read(io->context, aon[n])};
-		if (!(trace->observed & 1)) goto rollback;
+		if (!(trace->observed & 1)) unlatched_aon |= 1u << n;
 	}
+	trace->unlatched_branches = unlatched_branches;
+	trace->unlatched_aon = unlatched_aon;
 	return ONYX_CLOCK_OK;
 rollback:
+	trace->unlatched_branches = unlatched_branches;
+	trace->unlatched_aon = unlatched_aon;
 	while (branches_touched) {
 		unsigned n = --branches_touched;
 		uint32_t current = io->read(io->context, branches[n]);
