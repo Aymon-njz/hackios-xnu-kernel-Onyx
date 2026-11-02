@@ -11,6 +11,12 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - name: Validate RPMh resource table parser
+        run: |
+          clang -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \
+            -Ixnu/files/bsd/dev devices/onyx/drivers/gpu/hakios.onyx_rpmh.c \
+            tools/onyx-rpmh-test.c -o /tmp/onyx-rpmh-test
+          /tmp/onyx-rpmh-test
       - name: Validate measured GPU power status decoding
         run: |
           clang -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \

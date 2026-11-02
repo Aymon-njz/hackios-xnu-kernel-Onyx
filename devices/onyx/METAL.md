@@ -24,6 +24,19 @@ before implementing the backend; Android product strings are not evidence.
 
 ## Missing support
 
+`onyx_gpu_stage=3` inventories the command database at Onyx's reserved
+`0x81c60000/0x20000` region after a 30-second delay, using the checked
+`hakios.onyx_rpmh.c` parser. It records CX/MX/GFX resource addresses and ARC
+level tables through the console/live journal. It does not issue RPMh votes.
+The parser checks headers, entry/auxiliary bounds, unique matching IDs, even
+auxiliary lengths and strictly increasing nonzero levels, and does not publish
+partial output. Hardware validation of this stage is outstanding.
+
+Onyx's GPUCC supplies resolve to `cx.lvl` and `mx.lvl` in its FDT. The APPS
+RSC is at `0x17a00000` with three DRV windows; the selected DRV is 2 with TCS
+offset `0xd00` and distance `0x2a0`. TCS ownership, shared-vote aggregation,
+completion and restoration still need implementation before voltage writes.
+
 The SM8735 module source was located at
 `crdroidandroid/android_kernel_xiaomi_sm8735-modules`, commit
 `8500748dae32f10507c02f1c94bc971553cb525b`.

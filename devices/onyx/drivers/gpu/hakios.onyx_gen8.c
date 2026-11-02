@@ -12,10 +12,28 @@
 #include "hakios.onyx_gen8_firmware.h"
 #include "hakios.onyx_gen8_hfi.h"
 #include "hakios.onyx_gen8_power.h"
+#include "hakios.onyx_rpmh.h"
 
 static uint8_t hfi_check_memory[ONYX_HFI_SHARED_BYTES] __attribute__((aligned(16)));
 
 extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
+
+static void onyx_gen8_probe_supplies(void)
+{
+	/* Recovery FDT's reserved aop_cmd_db_region, read as memory. */
+	vm_offset_t database = ml_io_map(0x81c60000, 0x20000);
+	static const char *names[] = { "cx.lvl", "mx.lvl", "gfx.lvl" };
+	if (!database) { printf("onyx-gen8: cannot map command DB\n"); return; }
+	for (unsigned n = 0; n < 3; n++) {
+		struct onyx_rpmh_resource resource = { 0 };
+		int error = onyx_rpmh_lookup((const void *)database, 0x20000, names[n], &resource);
+		printf("onyx-gen8: RPMh %s lookup status %d address %#x levels %u\n",
+		    names[n], error, resource.address, resource.count);
+		if (!error) for (unsigned i = 0; i < resource.count; i++)
+			printf("onyx-gen8: RPMh %s index %u voltage-level %#x\n", names[n], i, resource.levels[i]);
+	}
+	printf("onyx-gen8: supply inventory complete; no voltage votes issued\n");
+}
 
 /* FDT: qcom,tuna-gpucc at 0x3d90000/0x9800. Register offsets from
  * onyx-oss/konoha-kernel-gki d6b71af752d00499a238ceff5bab30592cc8d0a8,
@@ -69,6 +87,10 @@ onyx_gen8_validate(void *parameter, __unused wait_result_t result)
 	size_t count = 0;
 	uint32_t command[] = { 0x20e, 0 }; /* CORE_FW_START wire shape, not sent to hardware */
 	delay_for_interval(30, NSEC_PER_SEC);
+	if ((uintptr_t)parameter == 3) {
+		onyx_gen8_probe_supplies();
+		return;
+	}
 	if ((uintptr_t)parameter == 2) {
 		onyx_gen8_probe_gpucc();
 		return;
@@ -107,7 +129,7 @@ onyx_gen8_init(void)
 {
 	int stage = 0;
 	thread_t thread;
-	if (!PE_parse_boot_argn("onyx_gpu_stage", &stage, sizeof(stage)) || (stage != 1 && stage != 2)) return;
+	if (!PE_parse_boot_argn("onyx_gpu_stage", &stage, sizeof(stage)) || stage < 1 || stage > 3) return;
 	if (kernel_thread_start(onyx_gen8_validate, (void *)(uintptr_t)stage, &thread) == KERN_SUCCESS)
 		thread_deallocate(thread);
 }
