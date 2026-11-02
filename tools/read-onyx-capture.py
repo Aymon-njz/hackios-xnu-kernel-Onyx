@@ -56,6 +56,8 @@ def extract_native(raw, run_id):
     body = raw[4096:4096 + size]
     if zlib.crc32(body) != crc:
         raise ValueError('native payload CRC mismatch (interrupted update or corrupt data)')
+    print(f'Verified native snapshot {sequence}: {size} bytes; '
+          f'console wrapped={bool(flags & 2)}, capacity reached={bool(flags & 4)}', file=sys.stderr)
     return body
 
 
