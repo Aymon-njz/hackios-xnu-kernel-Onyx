@@ -136,8 +136,6 @@ cc -std=c11 -Wall -Wextra -Werror -fsanitize=undefined -Ixnu/files/bsd/dev \
 /tmp/onyx-gen8-hfi-test
 ```
 
-### Metal library baseline
-
 ### Gen8 submission transport
 
 The Gen8 HFI module also encodes inline `H2F_MSG_ISSUE_CMD` packets and prepares
