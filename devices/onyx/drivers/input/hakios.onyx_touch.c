@@ -453,12 +453,22 @@ onyx_smmu_prepare_gpi(void)
 			state->old_s2cr = s2cr;
 		}
 	}
-	for (state->context_number = 0; state->context_number < contexts && used[state->context_number]; state->context_number++) {
+	/* IDR1.NUMS2CB reserves the low banks for stage-2-only contexts.
+	 * Match arm_smmu_init_domain_context's stage-1 allocation boundary. */
+	uint32_t stage2_contexts = (idr1 >> 16) & 0xff;
+	if (stage2_contexts > contexts) {
+		printf("onyx-touch: invalid SMMU bank geometry: %u stage2-only / %u total\n",
+		    stage2_contexts, contexts);
+		return false;
+	}
+	for (state->context_number = stage2_contexts; state->context_number < contexts && used[state->context_number]; state->context_number++) {
 	}
 	if (state->match == UINT32_MAX || state->context_number >= contexts) {
 		printf("onyx-touch: no free apps SMMU match/context for GPI\n");
 		return false;
 	}
+	printf("onyx-touch: SMMU stage1 bank %u selected, stage2-only banks %u, total %u\n",
+	    state->context_number, stage2_contexts, contexts);
 	state->context = ml_io_map(ONYX_APPS_SMMU_PHYS +
 	    (vm_offset_t)(state->pages + state->context_number) * state->page, 0x1000);
 	if (!state->context || (state->old_sctlr = onyx_touch_rd(state->context + SMMU_CB_SCTLR)) & 1) {
