@@ -536,12 +536,43 @@ onyx_smmu_prepare_gpi(void)
 		return false;
 	}
 	onyx_touch_wr(state->context + SMMU_CB_SCTLR, SMMU_SCTLR_ON);
+	/* Firmware can filter context-bank writes.  A valid software page
+	 * table does not establish that the hardware is using it.  Refuse to
+	 * hand a DMA ring to GPI unless the translation geometry and table
+	 * address actually survived programming.  Do not retry with bypass. */
+	__asm__ volatile ("dsb sy" ::: "memory");
+	struct {
+		vm_offset_t address;
+		uint32_t expected;
+		const char *name;
+	} checks[] = {
+		{ state->global1 + SMMU_CBA2R(state->context_number), 1, "CBA2R" },
+		{ state->global1 + SMMU_CBAR(state->context_number), 1u << 16 | 3u << 8 | 0xfu << 12, "CBAR" },
+		{ state->context + SMMU_CB_TCR2, SMMU_TCR2_VALUE, "TCR2" },
+		{ state->context + SMMU_CB_TCR, SMMU_TCR_39_BITS, "TCR" },
+		{ state->context + SMMU_CB_TTBR0, (uint32_t)root_pa, "TTBR0_LO" },
+		{ state->context + SMMU_CB_TTBR0 + 4, (uint32_t)(root_pa >> 32), "TTBR0_HI" },
+		{ state->context + SMMU_CB_MAIR0, SMMU_MAIR0_VALUE, "MAIR0" },
+		{ state->context + SMMU_CB_SCTLR, SMMU_SCTLR_ON, "SCTLR" },
+	};
+	for (unsigned n = 0; n < sizeof(checks) / sizeof(checks[0]); n++) {
+		uint32_t actual = onyx_touch_rd(checks[n].address);
+		if (actual != checks[n].expected) {
+			printf("onyx-touch: SMMU %s rejected: requested %#x read %#x; DMA disabled\n",
+			    checks[n].name, checks[n].expected, actual);
+			return false;
+		}
+	}
 	onyx_touch_wr(state->smmu + SMMU_S2CR(state->match), state->context_number);
 	onyx_touch_wr(state->smmu + SMMU_SMR(state->match), 1u << 31 | ONYX_GPI_STREAM);
-	if (onyx_touch_rd(state->smmu + SMMU_SMR(state->match)) != (1u << 31 | ONYX_GPI_STREAM)) {
+	__asm__ volatile ("dsb sy" ::: "memory");
+	uint32_t stream_config = onyx_touch_rd(state->smmu + SMMU_S2CR(state->match));
+	if (onyx_touch_rd(state->smmu + SMMU_SMR(state->match)) != (1u << 31 | ONYX_GPI_STREAM) ||
+	    stream_config != state->context_number) {
 		printf("onyx-touch: apps SMMU refused GPI stream mapping\n");
 		return false;
 	}
+	printf("onyx-touch: SMMU hardware configuration verified before DMA\n");
 	state->smmu_on = true;
 	printf("onyx-touch: GPI stream %#x mapped at IOVA %#llx (match %u context %u)\n",
 	    ONYX_GPI_STREAM, ONYX_GPI_IOVA, state->match, state->context_number);
