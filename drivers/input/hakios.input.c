@@ -224,6 +224,12 @@ hakios_input_init(void)
 	if (major < 0 || devfs_make_node(makedev(major, 0), DEVFS_CHAR, UID_ROOT, GID_WHEEL, 0666, "hakios-touch") == NULL) {
 		printf("hakios-touch: cannot create the device\n");
 	}
+	/* Installed Onyx iOS roots use the pre-rename backboardd bridge.
+	 * Both names use the same device and record ABI, never separate queues. */
+	if (major >= 0 && devfs_make_node(makedev(major, 0), DEVFS_CHAR,
+	    UID_ROOT, GID_WHEEL, 0666, "redwood-touch") == NULL) {
+		printf("hakios-touch: cannot create legacy input alias\n");
+	}
 	exit_call = thread_call_allocate(exit_hold_elapsed, NULL);
 	hakios_cpufreq_init();
 	hakios_virtio_input_init();
