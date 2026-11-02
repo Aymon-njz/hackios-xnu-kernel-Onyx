@@ -35,6 +35,7 @@ onyx_rsc_vote(struct onyx_rsc_io *io, uint32_t version, unsigned slot,
 	uint32_t old_message = io->read(io->context, base + l.message);
 	uint32_t old_address = io->read(io->context, base + l.address);
 	uint32_t old_data = io->read(io->context, base + l.data);
+	uint32_t old_irq = io->read(io->context, 0xd00);
 	/* MSGID: eight-byte request, response required, write. */
 	if (!write_checked(io, base + l.control, 0) ||
 	    !write_checked(io, base + l.message, 0x10108) ||
@@ -42,6 +43,7 @@ onyx_rsc_vote(struct onyx_rsc_io *io, uint32_t version, unsigned slot,
 	    !write_checked(io, base + l.data, index) ||
 	    !write_checked(io, base + l.wait, 1) ||
 	    !write_checked(io, base + l.enable, 1) ||
+	    !write_checked(io, 0xd00, old_irq | bit) ||
 	    !write_checked(io, base + l.control, 1u << 16) ||
 	    !write_checked(io, base + l.control, (1u << 16) | (1u << 24))) {
 		io->quarantined = 1;
@@ -64,6 +66,12 @@ onyx_rsc_vote(struct onyx_rsc_io *io, uint32_t version, unsigned slot,
 		io->quarantined = 1; return ONYX_RSC_READBACK;
 	}
 	io->write(io->context, 0xd08, bit);
+	/* Restore only our completion-enable bit. Never clear another slot's
+	 * interrupt enable if firmware changed it while our request completed. */
+	uint32_t irq = io->read(io->context, 0xd00);
+	if (!write_checked(io, 0xd00, (irq & ~bit) | (old_irq & bit))) {
+		io->quarantined = 1; return ONYX_RSC_READBACK;
+	}
 	if (!write_checked(io, base + l.control, 1u << 16) ||
 	    !write_checked(io, base + l.control, 0) ||
 	    !write_checked(io, base + l.message, old_message) ||

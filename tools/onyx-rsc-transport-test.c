@@ -9,11 +9,12 @@ static void write_reg(void *p, uint32_t offset, uint32_t value)
 	struct fake *f = p; f->writes++;
 	assert(offset >= 0xd00 && offset < 0x10000);
 	/* Slot 0 occupies 0xd00..0xf9f, apart from shared IRQ clear. */
-	assert(offset >= 0xfa0 || offset == 0xd08);
+	assert(offset >= 0xfa0 || offset == 0xd08 || offset == 0xd00);
 	if (f->reject == offset) return;
 	if (offset == 0xd08) f->r[0xd04 / 4] &= ~value;
 	else f->r[offset / 4] = value;
-	if (offset == 0xfc4 && value == 0x1010000 && f->complete) f->r[0xd04 / 4] |= 2;
+	if (offset == 0xfc4 && value == 0x1010000 && f->complete && (f->r[0xd00 / 4] & 2))
+		f->r[0xd04 / 4] |= 2;
 }
 static void pause_us(void *p, unsigned us) { assert(us == 10); ((struct fake *)p)->delays++; }
 static void reset(struct fake *f)
@@ -32,6 +33,13 @@ int main(void)
 	assert(onyx_rsc_vote(&io, 0x30800, 1, &rail, 0x10, 0x180) == ONYX_RSC_OK);
 	assert(f.r[0xfd4 / 4] == 0x42 && f.r[0xfd8 / 4] == 0x43 && f.r[0xfdc / 4] == 0x44);
 	assert(f.r[0xfc4 / 4] == 0x10000 && !f.r[0xfcc / 4] && !f.r[0xd04 / 4]);
+	assert(!f.r[0xd00 / 4]);
+	reset(&f); f.r[0xd00 / 4] = 0x81;
+	assert(onyx_rsc_vote(&io, 0x30800, 1, &rail, 0x10, 0) == ONYX_RSC_OK);
+	assert(f.r[0xd00 / 4] == 0x81);
+	reset(&f); f.r[0xd00 / 4] = 0x83;
+	assert(onyx_rsc_vote(&io, 0x30800, 1, &rail, 0x10, 0) == ONYX_RSC_OK);
+	assert(f.r[0xd00 / 4] == 0x83);
 	reset(&f); io.owned = 0;
 	assert(onyx_rsc_vote(&io, 0x30800, 1, &rail, 0x10, 0) == ONYX_RSC_NOT_OWNED && !f.writes);
 	io.owned = 1; f.r[0xd2c / 4] = 1; /* firmware slot 0 */

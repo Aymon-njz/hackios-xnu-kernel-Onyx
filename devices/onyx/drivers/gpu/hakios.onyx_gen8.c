@@ -66,6 +66,17 @@ static void onyx_gen8_probe_rsc(void)
 		uint32_t wait = *(volatile uint32_t *)(tcs + layout.wait);
 		printf("onyx-gen8: RSC TCS %u control %#x status %#x enabled %#x wait %#x\n",
 		    n, control, status, enable, wait);
+		for (unsigned command = 0; command < commands && command < 16; command++) {
+			if (!(enable & (1u << command))) continue;
+			uint32_t at = command * layout.stride;
+			printf("onyx-gen8: before RSC TCS %u command %u read\n", n, command);
+			uint32_t message = *(volatile uint32_t *)(tcs + layout.message + at);
+			uint32_t address = *(volatile uint32_t *)(tcs + layout.address + at);
+			uint32_t data = *(volatile uint32_t *)(tcs + layout.data + at);
+			uint32_t command_status = *(volatile uint32_t *)(tcs + layout.command_status + at);
+			printf("onyx-gen8: RSC TCS %u command %u message %#x resource %#x data %#x status %#x\n",
+			    n, command, message, address, data, command_status);
+		}
 	}
 	printf("onyx-gen8: RSC inventory complete; no ownership claimed or requests issued\n");
 }
