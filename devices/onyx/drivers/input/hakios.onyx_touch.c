@@ -744,6 +744,8 @@ onyx_gpi_transfer(const uint8_t *tx, uint8_t *rx, uint32_t length)
 	uint8_t *tx_data, *rx_data;
 	uint32_t divider, events = 0, required = 1, spi_hz = ONYX_NVT_SPI_HZ;
 	uint64_t deadline;
+	int memory_poll = 0;
+	PE_parse_boot_argn("onyx_touch_event_memory", &memory_poll, sizeof(memory_poll));
 
 	/* ONYX_GPI_TX_DATA_OFF..ONYX_GPI_RX_DATA_OFF is the 4 KiB TX aperture. */
 	if (!state->channels_on || state->transfer_failed || length == 0 || length > ONYX_NVT_GPI_MAX) {
@@ -809,7 +811,7 @@ onyx_gpi_transfer(const uint8_t *tx, uint8_t *rx, uint32_t length)
 	printf("onyx-touch: DMA completion probe begins; SMMU context %u\n", state->context_number);
 	clock_interval_to_deadline(200, NSEC_PER_MSEC, &deadline);
 	while (mach_absolute_time() < deadline) {
-		uint32_t fault = onyx_touch_rd(state->context + SMMU_CB_FSR);
+		uint32_t fault = memory_poll ? 0 : onyx_touch_rd(state->context + SMMU_CB_FSR);
 		if (fault & SMMU_FSR_ALL) {
 			printf("onyx-touch: DMA translation fault FSR %#x FAR %08x:%08x syndrome %#x; transfer stopped\n",
 			    fault, onyx_touch_rd(state->context + SMMU_CB_FAR + 4),
@@ -819,6 +821,11 @@ onyx_gpi_transfer(const uint8_t *tx, uint8_t *rx, uint32_t length)
 			return false;
 		}
 		if (onyx_gpi_reap_event(state, &events) && events >= required) {
+			if (memory_poll) {
+				printf("onyx-touch: first DMA completion observed in RAM; diagnostic stops before ring reuse\n");
+				state->transfer_failed = true;
+				return false;
+			}
 			if (rx) {
 				onyx_touch_clean((vm_offset_t)rx_data, length);
 				memcpy(rx, rx_data, length);
@@ -830,6 +837,11 @@ onyx_gpi_transfer(const uint8_t *tx, uint8_t *rx, uint32_t length)
 			return false;
 		}
 		delay_for_interval(100, NSEC_PER_USEC);
+	}
+	if (memory_poll) {
+		printf("onyx-touch: no DMA completion in RAM before deadline; diagnostic stopped\n");
+		state->transfer_failed = true;
+		return false;
 	}
 	printf("onyx-touch: GPI SPI transfer timed out (events %u/%u, tx-rp %#x rx-rp %#x err %#x)\n",
 	    events, required, onyx_touch_rd(onyx_gpi + GPI_CH_CONTEXT(0) + 0x10),
