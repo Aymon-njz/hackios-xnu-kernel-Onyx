@@ -23,5 +23,16 @@ compiler="xcrun clang++ -target arm64-apple-ios16.0 -isysroot $quoted_sdk"
 make -C "$metal_source" test HAKIOS="$repo_root" MESA=
 make -C "$metal_source" ios HAKIOS="$repo_root" SDK="$sdk_root" MESA= \
   IOS_CXX="$compiler" IOS_AR='xcrun ar rcs'
+bundle="$metal_source/out/ios/HakiosMetal.bundle"
+mkdir -p "$bundle"
+xcrun clang -target arm64-apple-ios16.0 -isysroot "$sdk_root" -O1 -bundle \
+  -framework Foundation -framework Metal -framework IOKit -framework IOSurface \
+  -lobjc -lc++ -DHAKIOS_METAL_GPU -I"$metal_source/include" -I"$metal_source/plugin" \
+  -o "$bundle/HakiosMetal" "$metal_source/plugin/HakiosMetal.m" \
+  "$metal_source/plugin/hakios_metallib.c" "$metal_source/out/ios/libhakios-metal.a"
+cp "$repo_root/userland/src/HakiosMetal.plist" "$bundle/Info.plist"
+plutil -lint "$bundle/Info.plist"
 xcrun vtool -show-build "$metal_source/out/ios/hakios-metal-probe"
-shasum -a 256 "$metal_source/out/ios/libhakios-metal.a" "$metal_source/out/ios/hakios-metal-probe"
+xcrun vtool -show-build "$bundle/HakiosMetal"
+shasum -a 256 "$metal_source/out/ios/libhakios-metal.a" \
+  "$metal_source/out/ios/hakios-metal-probe" "$bundle/HakiosMetal"

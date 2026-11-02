@@ -173,8 +173,8 @@ The pinned Metal source needed `<algorithm>` for `std::fill`, a constexpr
 bit-cast compatible with Apple Clang, and complete initialization of one probe
 binding. `tools/metal/clang-compat.patch` records these changes against upstream
 `9d52b5142542a253b7263a0d7889ad278e5c7693`. All 259 host tests pass with the
-default Apple Clang after these fixes. The ARM64 iOS static library and probe
-also build with the Theos iOS 16.5 SDK; their load command identifies iOS with
+default Apple Clang after these fixes. The ARM64 iOS static library, probe and
+actual upstream `plugin/HakiosMetal.m` bundle also build with the Theos iOS 16.5 SDK; their load command identifies iOS with
 minimum version 16.0. Reproduce on macOS:
 
 ```
@@ -182,7 +182,8 @@ bash tools/metal/build-ios.sh /path/to/hakios-metal /path/to/iPhoneOS16.5.sdk
 ```
 
 The helper validates the pinned source revision and applies the recorded patch
-idempotently. These builds omit Mesa (`MESA=`); they cannot compile AIR. The
+idempotently. It packages `out/ios/HakiosMetal.bundle` with the same Info.plist
+used by the userland build. These builds omit Mesa (`MESA=`); they cannot compile AIR. The
 command-generation backend is still A6xx. Neither host tests nor the existence
-of an iOS binary establishes working Onyx graphics. The library/probe have not
+of an iOS binary establishes working Onyx graphics. The library/probe/plugin have not
 been installed into the phone's root image or advertised as a Metal device.
