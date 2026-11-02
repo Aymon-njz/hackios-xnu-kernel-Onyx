@@ -28,10 +28,25 @@ onyx_rsc_vote(struct onyx_rsc_io *io, uint32_t version, unsigned slot,
 	    !(io->read(io->context, base + l.status) & 1) ||
 	    io->read(io->context, base + l.enable) || io->read(io->context, base + l.wait) ||
 	    (control & ~(1u << 16))) return ONYX_RSC_BUSY;
-	/* Do not interleave a request with a firmware command on any active TCS.
-	 * Slot 0 remains untouched even when that makes startup unavailable. */
-	for (unsigned s = 0; s < 3; s++) if (s != slot &&
-	    io->read(io->context, 0xd00 + s * 0x2a0 + l.enable)) return ONYX_RSC_BUSY;
+	/* Firmware may leave completed commands enabled. Preserve them, but
+	 * require completion/idle state and reject any request on our resource.
+	 * This is not an ownership grant: the caller's exclusive claim is still
+	 * required. Never modify another TCS to make this test pass. */
+	for (unsigned s = 0; s < 3; s++) if (s != slot) {
+		uint32_t other = 0xd00 + s * 0x2a0;
+		uint32_t enabled = io->read(io->context, other + l.enable);
+		if (!enabled) continue;
+		if (!(io->read(io->context, other + l.status) & 1) || (enabled & ~0xffffu))
+			return ONYX_RSC_BUSY;
+		for (unsigned n = 0; n < 16; n++) if (enabled & (1u << n)) {
+			uint32_t at = other + n * l.stride;
+			uint32_t pending_address = io->read(io->context, at + l.address);
+			uint32_t command_status = io->read(io->context, at + l.command_status);
+			if (pending_address == address || (command_status & 0x10100) != 0x10100)
+				return ONYX_RSC_BUSY;
+		}
+		if (io->read(io->context, other + l.enable) != enabled) return ONYX_RSC_BUSY;
+	}
 	uint32_t old_message = io->read(io->context, base + l.message);
 	uint32_t old_address = io->read(io->context, base + l.address);
 	uint32_t old_data = io->read(io->context, base + l.data);

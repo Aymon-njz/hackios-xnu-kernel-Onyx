@@ -3,6 +3,16 @@
 #ifndef HAKIOS_ONYX_GEN8_POWER_H
 #define HAKIOS_ONYX_GEN8_POWER_H
 #include <stdint.h>
+#include "hakios.onyx_rpmh.h"
+
+enum onyx_cx_result {
+	ONYX_CX_OK, ONYX_CX_ARGUMENT, ONYX_CX_SUPPLIES, ONYX_CX_HW_CONTROL,
+	ONYX_CX_WRITE_FAILED, ONYX_CX_TIMEOUT
+};
+/* I/O addresses are relative to Tuna GPUCC. Caller must establish supplies
+ * first. Only the CX collapse bit is changed; no PLL, GMU or GX access. */
+enum onyx_cx_result onyx_gen8_cx_enable(struct onyx_rsc_io *gpucc,
+    unsigned supplies_ready, uint32_t *saved_gdscr);
 
 enum onyx_gen8_power_missing {
 	ONYX_CX_OFF = 1u << 0,

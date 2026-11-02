@@ -1,6 +1,6 @@
-/* Onyx Gen8 kernel integration. Stage 1 validates firmware/queues in CPU memory;
- * stage 2 reads the Tuna GPU clock controller. Neither writes hardware or
- * accesses the GMU, 3D engine or GPU SMMU.
+/* Onyx Gen8 kernel integration. Stages 1..4 validate/discover without writes.
+ * Stage 5 is an explicitly enabled experimental CX power-on test.
+ * No stage currently starts the GMU, 3D engine or GPU SMMU.
  * The existing no-GPU stubs stay in force until a real backend is implemented. */
 #include <sys/systm.h>
 #include <kern/startup.h>
@@ -17,6 +17,92 @@
 static uint8_t hfi_check_memory[ONYX_HFI_SHARED_BYTES] __attribute__((aligned(16)));
 
 extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
+
+static uint32_t onyx_gpu_mmio_read(void *context, uint32_t offset)
+{
+	__asm__ volatile ("dsb sy" ::: "memory");
+	uint32_t value = *(volatile uint32_t *)((vm_offset_t)context + offset);
+	__asm__ volatile ("dsb sy" ::: "memory");
+	return value;
+}
+static void onyx_gpu_mmio_write(void *context, uint32_t offset, uint32_t value)
+{
+	*(volatile uint32_t *)((vm_offset_t)context + offset) = value;
+	__asm__ volatile ("dsb sy" ::: "memory");
+}
+static void onyx_gpu_mmio_wait(__unused void *context, unsigned microseconds)
+{
+	delay_for_interval(microseconds, NSEC_PER_USEC);
+}
+
+static void onyx_gen8_power_test(void)
+{
+	int enabled = 0, cpus = 0, native = 0;
+	uint32_t bootcpu;
+	if (!PE_parse_boot_argn("onyx_gpu_power", &enabled, sizeof(enabled)) || enabled != 1 ||
+	    !PE_parse_boot_argn("cpus", &cpus, sizeof(cpus)) || cpus != 1 ||
+	    !PE_parse_boot_argn("ufs_native", &native, sizeof(native)) || native != 4 ||
+	    PE_parse_boot_argn("bootcpu", &bootcpu, sizeof(bootcpu))) {
+		printf("onyx-gen8: power test refused: requires explicit power=1 and single-CPU loaderless mode\n");
+		return;
+	}
+	/* The test takes over the APPS-owned DRV2 after the primary-core
+	 * loaderless handoff. This is experimental: stable readback cannot prove
+	 * hypervisor ownership. No live UEFI mailbox/firmware CPU is supported. */
+	vm_offset_t rsc = ml_io_map(0x17a20000, 0x10000);
+	vm_offset_t database = ml_io_map(0x81c60000, 0x20000);
+	vm_offset_t gpucc = ml_io_map(0x03d90000, 0x9800);
+	if (!rsc || !database || !gpucc) { printf("onyx-gen8: power mapping failed\n"); return; }
+	struct onyx_rsc_io rio = { (void *)rsc, onyx_gpu_mmio_read, onyx_gpu_mmio_write, onyx_gpu_mmio_wait, 0, 0 };
+	struct onyx_rsc_io gio = { (void *)gpucc, onyx_gpu_mmio_read, onyx_gpu_mmio_write, onyx_gpu_mmio_wait, 0, 0 };
+	uint32_t version = rio.read(rio.context, 0), config = rio.read(rio.context, 0xc);
+	if (version != 0x30800 || config != 0x800c8104 || (rio.read(rio.context, 4) & (1u << 24))) {
+		printf("onyx-gen8: power refused: RSC identity/configuration changed\n"); return;
+	}
+	/* Require the observed empty slot and firmware command to stay unchanged
+	 * for 10 ms. The transport revalidates state immediately before writing. */
+	static const uint32_t offsets[] = {
+		0xd24, 0xd28, 0xd2c, 0xd20, 0xd34, 0xd38, 0xd3c, 0xd40,
+		0xfc4, 0xfc8, 0xfcc, 0xfc0, 0x1264, 0x1268, 0x126c, 0x1260
+	};
+	uint32_t snapshot[sizeof(offsets) / sizeof(offsets[0])];
+	for (unsigned i = 0; i < sizeof(offsets) / sizeof(offsets[0]); i++) snapshot[i] = rio.read(rio.context, offsets[i]);
+	for (unsigned sample = 0; sample < 100; sample++) {
+		onyx_gpu_mmio_wait(NULL, 100);
+		for (unsigned i = 0; i < sizeof(offsets) / sizeof(offsets[0]); i++)
+			if (snapshot[i] != rio.read(rio.context, offsets[i])) {
+				printf("onyx-gen8: RSC changed during takeover check; no power writes\n"); return;
+			}
+	}
+	struct onyx_rpmh_resource rails[2];
+	const char *names[] = { "cx.lvl", "mx.lvl" };
+	for (unsigned n = 0; n < 2; n++) {
+		if (onyx_rpmh_lookup((const void *)database, 0x20000, names[n], &rails[n]) ||
+		    rails[n].address != (n ? 0x30010u : 0x30000u) ||
+		    rails[n].count != (n ? 13u : 10u) ||
+		    rails[n].levels[rails[n].count - 1] != (n ? 0x1c0u : 0x1b0u)) {
+			printf("onyx-gen8: power refused: rail inventory changed\n"); return;
+		}
+	}
+	rio.owned = 1;
+	for (unsigned n = 0; n < 2; n++) {
+		/* Diagnostic only: use the highest advertised level to avoid lowering
+		 * an unknown existing vote. Leave the vote in place until reboot;
+		 * lowering it without a full vote ledger would be incorrect. */
+		unsigned level = rails[n].levels[rails[n].count - 1];
+		printf("onyx-gen8: before experimental RPMh %s vote level %#x\n", names[n], level);
+		enum onyx_rsc_result result = onyx_rsc_vote(&rio, version, 1, &rails[n], level, level);
+		printf("onyx-gen8: RPMh %s vote status %u\n", names[n], (unsigned)result);
+		if (result != ONYX_RSC_OK) return;
+	}
+	gio.owned = 1;
+	uint32_t saved = 0;
+	printf("onyx-gen8: before CX power-on; GMU and GX remain untouched\n");
+	enum onyx_cx_result result = onyx_gen8_cx_enable(&gio, 1, &saved);
+	printf("onyx-gen8: CX power status %u saved GDSCR %#x readback %#x\n",
+	    (unsigned)result, saved, gio.read(gio.context, 0x9080));
+	printf("onyx-gen8: power test stopped; no GMU firmware boot, GPU work or Metal acceleration\n");
+}
 
 static void onyx_gen8_probe_supplies(void)
 {
@@ -133,6 +219,10 @@ onyx_gen8_validate(void *parameter, __unused wait_result_t result)
 	size_t count = 0;
 	uint32_t command[] = { 0x20e, 0 }; /* CORE_FW_START wire shape, not sent to hardware */
 	delay_for_interval(30, NSEC_PER_SEC);
+	if ((uintptr_t)parameter == 5) {
+		onyx_gen8_power_test();
+		return;
+	}
 	if ((uintptr_t)parameter == 3) {
 		onyx_gen8_probe_supplies();
 		return;
@@ -180,7 +270,7 @@ onyx_gen8_init(void)
 {
 	int stage = 0;
 	thread_t thread;
-	if (!PE_parse_boot_argn("onyx_gpu_stage", &stage, sizeof(stage)) || stage < 1 || stage > 4) return;
+	if (!PE_parse_boot_argn("onyx_gpu_stage", &stage, sizeof(stage)) || stage < 1 || stage > 5) return;
 	if (kernel_thread_start(onyx_gen8_validate, (void *)(uintptr_t)stage, &thread) == KERN_SUCCESS)
 		thread_deallocate(thread);
 }

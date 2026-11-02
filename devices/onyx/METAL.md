@@ -61,6 +61,36 @@ This adapter is not connected to real MMIO. The observed firmware command in slo
 The caller must provide an established existing vote floor; zero is not evidence
 that a shared regulator is off. Hardware regulator control remains unavailable.
 
+### Experimental hardware power test
+
+The new `onyx_gpu_stage=5 onyx_gpu_power=1` path wires the ARC transport to real
+DRV2 MMIO and a bounded Tuna CX GDSCR power-on operation. Normal boots and stages
+1..4 still do not write these registers. This path is implemented but not yet
+hardware-tested. It is not GMU boot or a Metal device.
+
+The test requires `cpus=1`, `ufs_native=4`, no `bootcpu` argument, the measured
+RSC v3.8/configuration and exact CX/MX table identities. It samples active TCS
+state for 10 ms, then the transport checks it again before programming. Completed
+unrelated commands are preserved byte-for-byte; incomplete/conflicting requests
+block a vote. Stable state is not a firmware ownership grant: this is an explicit
+experimental DRV2 takeover during primary-core loaderless operation, not a
+general firmware/PM handoff protocol.
+
+To avoid lowering an unknown prior vote, this diagnostic requests the highest
+advertised CX and MX levels (`0x1b0` and `0x1c0`) and leaves them until reboot.
+It does not implement a shared regulator vote ledger or normal DVFS. This test
+should be short, followed by reboot/recovery and log collection. A failed second
+vote can leave the first applied. Do not infer that a transport error undid a
+voltage request. Neither GFX/GX nor CPU clock frequencies are configured.
+
+Only after both votes complete does the code clear CX's software-collapse bit,
+preserving other fields, and wait at most 2 ms for power-on. A timeout requests
+restoration of the saved collapse bit and quarantines the power adapter; it does
+not claim physical rollback succeeded. No PLL or GMU MMIO is accessed. All steps
+are logged into the live diagnostic journal. Host tests cover the captured
+retained ldob5 request, IRQ/state preservation, conflicting/incomplete commands,
+supplies gate, already-on/HW-controlled domains, rejected writes and timeouts.
+
 The SM8735 module source was located at
 `crdroidandroid/android_kernel_xiaomi_sm8735-modules`, commit
 `8500748dae32f10507c02f1c94bc971553cb525b`.

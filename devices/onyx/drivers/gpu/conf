@@ -4,4 +4,5 @@ driver ONYX_GEN8_CORE
 	file bsd/dev/hakios.onyx_gen8_firmware.c
 	file bsd/dev/hakios.onyx_gen8_hfi.c
 	file bsd/dev/hakios.onyx_rpmh.c
-	help Gen8 firmware/HFI components. onyx_gpu_stage=1 validates firmware, stage=2 reads GPUCC, stage=3 inventories RPMh supplies. No voltage votes, GMU startup or acceleration yet.
+	file bsd/dev/hakios.onyx_gen8_power.c
+	help Gen8 firmware/HFI components. onyx_gpu_stage=1..4 validate/discover; stage=5 with onyx_gpu_power=1 experimentally votes CX/MX and powers CX. GMU startup and acceleration remain unavailable.

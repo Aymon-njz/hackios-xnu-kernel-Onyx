@@ -11,6 +11,12 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - name: Validate CX power-on failure and rollback paths
+        run: |
+          clang -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \
+            -Ixnu/files/bsd/dev devices/onyx/drivers/gpu/hakios.onyx_gen8_power.c \
+            tools/onyx-cx-enable-test.c -o /tmp/onyx-cx-enable-test
+          /tmp/onyx-cx-enable-test
       - name: Validate RSC request and failure paths
         run: |
           clang -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \

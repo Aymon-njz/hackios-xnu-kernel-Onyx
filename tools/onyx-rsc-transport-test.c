@@ -44,6 +44,16 @@ int main(void)
 	assert(onyx_rsc_vote(&io, 0x30800, 1, &rail, 0x10, 0) == ONYX_RSC_NOT_OWNED && !f.writes);
 	io.owned = 1; f.r[0xd2c / 4] = 1; /* firmware slot 0 */
 	assert(onyx_rsc_vote(&io, 0x30800, 1, &rail, 0x10, 0) == ONYX_RSC_BUSY && !f.writes);
+	/* Captured completed ldob5 request: preserve slot 0 byte-for-byte. */
+	f.r[0xd28 / 4] = 1; f.r[0xd38 / 4] = 0x40f08; f.r[0xd40 / 4] = 0x10101;
+	f.r[0xd24 / 4] = 0x1010000; f.r[0xd34 / 4] = 0x10108; f.r[0xd3c / 4] = 7;
+	uint32_t saved_slot0[0x2a0 / 4]; memcpy(saved_slot0, f.r + 0xd00 / 4, sizeof(saved_slot0));
+	assert(onyx_rsc_vote(&io, 0x30800, 1, &rail, 0x10, 0) == ONYX_RSC_OK);
+	assert(!memcmp(saved_slot0 + 4, f.r + 0xd10 / 4, sizeof(saved_slot0) - 16));
+	f.r[0xd38 / 4] = rail.address; f.writes = 0;
+	assert(onyx_rsc_vote(&io, 0x30800, 1, &rail, 0x10, 0) == ONYX_RSC_BUSY && !f.writes);
+	f.r[0xd38 / 4] = 0x40f08; f.r[0xd40 / 4] = 0x101;
+	assert(onyx_rsc_vote(&io, 0x30800, 1, &rail, 0x10, 0) == ONYX_RSC_BUSY && !f.writes);
 	reset(&f); f.r[4 / 4] = 1u << 24;
 	assert(onyx_rsc_vote(&io, 0x30800, 1, &rail, 0x10, 0) == ONYX_RSC_NOT_OWNED && !f.writes);
 	reset(&f); f.complete = 0;
