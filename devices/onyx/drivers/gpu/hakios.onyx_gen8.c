@@ -35,6 +35,35 @@ static void onyx_gen8_probe_supplies(void)
 	printf("onyx-gen8: supply inventory complete; no voltage votes issued\n");
 }
 
+static void onyx_gen8_probe_rsc(void)
+{
+	/* FDT selects APPS RSC DRV2. Only read its identity and active TCSs.
+	 * qcom,tcs-config lists ACTIVE first, with three slots at IDs 0..2. */
+	printf("onyx-gen8: APPS RSC DRV2 read-only inventory begins\n");
+	vm_offset_t base = ml_io_map(0x17a20000, 0x10000);
+	if (!base) { printf("onyx-gen8: RSC mapping failed\n"); return; }
+	uint32_t version = *(volatile uint32_t *)base;
+	struct onyx_rsc_layout layout;
+	int error = onyx_rsc_layout(version, &layout);
+	printf("onyx-gen8: RSC version %#x layout status %d\n", version, error);
+	if (error) return;
+	uint32_t config = *(volatile uint32_t *)(base + 0x0c);
+	unsigned slots = (config >> 12) & 63, commands = (config >> 27) & 31;
+	printf("onyx-gen8: RSC DRV2 config %#x TCSs %u commands-per-TCS %u\n", config, slots, commands);
+	if (slots < 3 || !commands) return;
+	for (unsigned n = 0; n < 3; n++) {
+		vm_offset_t tcs = base + 0xd00 + n * 0x2a0;
+		printf("onyx-gen8: before RSC active TCS %u reads\n", n);
+		uint32_t control = *(volatile uint32_t *)(tcs + layout.control);
+		uint32_t status = *(volatile uint32_t *)(tcs + layout.status);
+		uint32_t enable = *(volatile uint32_t *)(tcs + layout.enable);
+		uint32_t wait = *(volatile uint32_t *)(tcs + layout.wait);
+		printf("onyx-gen8: RSC TCS %u control %#x status %#x enabled %#x wait %#x\n",
+		    n, control, status, enable, wait);
+	}
+	printf("onyx-gen8: RSC inventory complete; no ownership claimed or requests issued\n");
+}
+
 /* FDT: qcom,tuna-gpucc at 0x3d90000/0x9800. Register offsets from
  * onyx-oss/konoha-kernel-gki d6b71af752d00499a238ceff5bab30592cc8d0a8,
  * drivers/clk/qcom/gpucc-tuna.c. No inherited SC7280 offsets are used.
@@ -91,6 +120,11 @@ onyx_gen8_validate(void *parameter, __unused wait_result_t result)
 		onyx_gen8_probe_supplies();
 		return;
 	}
+	if ((uintptr_t)parameter == 4) {
+		onyx_gen8_probe_supplies();
+		onyx_gen8_probe_rsc();
+		return;
+	}
 	if ((uintptr_t)parameter == 2) {
 		onyx_gen8_probe_gpucc();
 		return;
@@ -129,7 +163,7 @@ onyx_gen8_init(void)
 {
 	int stage = 0;
 	thread_t thread;
-	if (!PE_parse_boot_argn("onyx_gpu_stage", &stage, sizeof(stage)) || stage < 1 || stage > 3) return;
+	if (!PE_parse_boot_argn("onyx_gpu_stage", &stage, sizeof(stage)) || stage < 1 || stage > 4) return;
 	if (kernel_thread_start(onyx_gen8_validate, (void *)(uintptr_t)stage, &thread) == KERN_SUCCESS)
 		thread_deallocate(thread);
 }

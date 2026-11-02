@@ -1,6 +1,36 @@
 #include "hakios.onyx_rpmh.h"
 static uint16_t u16(const uint8_t *p) { return p[0] | (uint16_t)p[1] << 8; }
 static uint32_t u32(const uint8_t *p) { return u16(p) | (uint32_t)u16(p + 2) << 16; }
+int onyx_rpmh_arc_vote(const struct onyx_rpmh_resource *r, unsigned requested,
+    unsigned existing, uint32_t *address, uint32_t *index)
+{
+	if (!r || !address || !index || !r->count || r->count > 16 ||
+	    ((r->address >> 16) & 7) != 3 || (r->address & 3)) return 2;
+	unsigned wanted = requested > existing ? requested : existing;
+	for (unsigned n = 0; n < r->count; n++) {
+		if (n && r->levels[n] <= r->levels[n - 1]) return 2;
+	}
+	for (unsigned n = 0; n < r->count; n++) if (r->levels[n] >= wanted) {
+		*address = r->address; *index = n; return 0;
+	}
+	return 1;
+}
+
+int onyx_rsc_layout(uint32_t version, struct onyx_rsc_layout *layout)
+{
+	if (!layout) return 2;
+	unsigned major = (version >> 16) & 255, minor = (version >> 8) & 255;
+	if (major == 3) {
+		*layout = (struct onyx_rsc_layout){ 0x24, 0x28, 0x2c, 0x20, 0x34, 0x38, 0x3c, 0x40, 24 };
+		return 0;
+	}
+	if (major == 2 && minor == 7) {
+		*layout = (struct onyx_rsc_layout){ 0x14, 0x18, 0x1c, 0x10, 0x30, 0x34, 0x38, 0x3c, 20 };
+		return 0;
+	}
+	return 1;
+}
+
 int onyx_rpmh_lookup(const void *database, size_t bytes, const char *name,
     struct onyx_rpmh_resource *resource)
 {

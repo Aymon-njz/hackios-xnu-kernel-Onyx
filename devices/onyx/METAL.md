@@ -37,6 +37,15 @@ RSC is at `0x17a00000` with three DRV windows; the selected DRV is 2 with TCS
 offset `0xd00` and distance `0x2a0`. TCS ownership, shared-vote aggregation,
 completion and restoration still need implementation before voltage writes.
 
+The next RPMh component selects the lowest resource-specific ARC index meeting
+the requested and existing level; it refuses non-ARC resources, malformed tables
+and unsupported levels. It constructs no raw voltage write. RSC layout selection
+supports the source-defined v2.7/v3 register layouts and rejects unknown versions.
+`onyx_gpu_stage=4` captures the command DB and reads DRV2 identity/configuration
+and its three active TCS control/status/enable/wait registers. It does not claim
+TCS ownership or issue a request. Running this under the verified live journal
+is the next test before implementing hardware votes.
+
 The SM8735 module source was located at
 `crdroidandroid/android_kernel_xiaomi_sm8735-modules`, commit
 `8500748dae32f10507c02f1c94bc971553cb525b`.

@@ -16,6 +16,18 @@ int main(void)
 	p16(db + 168, 0); p16(db + 170, 0x10); p16(db + 172, 0x180);
 	assert(!onyx_rpmh_lookup(db, sizeof(db), "cx.lvl", &result));
 	assert(result.address == 0x30000 && result.count == 3 && result.levels[2] == 0x180);
+	uint32_t address = 0xdead, index = 0xbeef;
+	assert(!onyx_rpmh_arc_vote(&result, 1, 0, &address, &index));
+	assert(address == 0x30000 && index == 1);
+	assert(!onyx_rpmh_arc_vote(&result, 0x10, 0x180, &address, &index) && index == 2);
+	assert(onyx_rpmh_arc_vote(&result, 0x181, 0, &address, &index) == 1);
+	result.address = 0x40000;
+	assert(onyx_rpmh_arc_vote(&result, 0x10, 0, &address, &index) == 2);
+	struct onyx_rsc_layout layout;
+	assert(!onyx_rsc_layout(0x30000, &layout) && layout.control == 0x24 && layout.stride == 24);
+	assert(!onyx_rsc_layout(0x20700, &layout) && layout.control == 0x14 && layout.stride == 20);
+	assert(onyx_rsc_layout(0x40000, &layout) == 1);
+	assert(onyx_rsc_layout(0x20600, &layout) == 1);
 	result = sentinel;
 	assert(onyx_rpmh_lookup(db, sizeof(db), "mx.lvl", &result) == 1);
 	assert(!memcmp(&result, &sentinel, sizeof(result)));
