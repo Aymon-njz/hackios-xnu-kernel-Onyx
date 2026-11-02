@@ -45,6 +45,9 @@ supports the source-defined v2.7/v3 register layouts and rejects unknown version
 and its three active TCS control/status/enable/wait registers. It does not claim
 TCS ownership or issue a request. Running this under the verified live journal
 is the next test before implementing hardware votes.
+The inventory also records the version-specific solver capability register.
+An idle-looking TCS is not proof that it is available to XNU: solver/PM
+ownership and existing votes must be established before triggering requests.
 
 The SM8735 module source was located at
 `crdroidandroid/android_kernel_xiaomi_sm8735-modules`, commit

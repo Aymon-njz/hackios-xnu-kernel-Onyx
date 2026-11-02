@@ -47,6 +47,12 @@ static void onyx_gen8_probe_rsc(void)
 	int error = onyx_rsc_layout(version, &layout);
 	printf("onyx-gen8: RSC version %#x layout status %d\n", version, error);
 	if (error) return;
+	/* Stock v3 reads solver capability at +4; v2.7 defines this at +0.
+	 * A solver-capable controller needs the firmware/PM handoff path rather
+	 * than assuming an unused active TCS is ours to trigger. */
+	uint32_t solver = *(volatile uint32_t *)(base + (((version >> 16) & 255) == 3 ? 4 : 0));
+	printf("onyx-gen8: RSC solver config %#x capability %u; voltage writes remain blocked\n",
+	    solver, !!(solver & (1u << 24)));
 	uint32_t config = *(volatile uint32_t *)(base + 0x0c);
 	unsigned slots = (config >> 12) & 63, commands = (config >> 27) & 31;
 	printf("onyx-gen8: RSC DRV2 config %#x TCSs %u commands-per-TCS %u\n", config, slots, commands);
