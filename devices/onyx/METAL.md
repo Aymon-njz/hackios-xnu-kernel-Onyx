@@ -75,6 +75,37 @@ working on Onyx at this stage.
 
 ## Host baseline
 
+### Gen8 firmware component
+
+`drivers/gpu/onyx_gen8_firmware.{c,h}` under this device directory builds a
+validated firmware load plan without touching hardware. It validates the whole
+image before publishing entries, separates metadata from code, checks virtual
+ranges and requires backing reservations for off-chip payloads. This is staging
+code for the backend; it is not yet linked into XNU and does not boot the GMU.
+
+The extracted Gen80600 image passes with 15 records: 11 metadata records and
+four payload blocks. The host test also checks truncation, malformed metadata,
+address overflow, missing backing reservations and insufficient output capacity.
+Local normal and UndefinedBehaviorSanitizer runs pass. The local AddressSanitizer
+executable spun during startup and was stopped; it is not recorded as a pass.
+The separate Gen8 host workflow runs both sanitizers on Linux without vendor blobs.
+
+From the repository root:
+
+```
+cc -std=c11 -Wall -Wextra -Werror -fsanitize=undefined \
+  devices/onyx/drivers/gpu/onyx_gen8_firmware.c \
+  devices/onyx/drivers/gpu/firmware_test.c -o /tmp/onyx-gen8-fw-test
+/tmp/onyx-gen8-fw-test /path/to/private/gen80600_gmu.bin
+```
+
+KGSL's `gen8_hwsched_gmu_first_boot` also requires CX power, GMU clocks,
+interconnect votes, secure-world GPU register initialization, memory mappings,
+and HFI configuration before firmware start. Successful parsing does not satisfy
+those dependencies or provide a Metal device.
+
+### Metal library
+
 The checked-out Metal source needed `<algorithm>` in `src/fake_gpu.cpp` for
 `std::fill`. After that local fix, 259 tests passed with zero failed checks using
 Homebrew LLVM and its matching libc++ (Apple Clang rejects the upstream
