@@ -45,6 +45,7 @@ jobs:
         run: |
           python3 tools/hakios-config.py defconfig onyx
           python3 tools/hakios-config.py check
+          grep -qx 'CONFIG_HAKIOS_ONYX_GEN8_CORE=y' .config
           ./xnu/apply.sh
           ./xnu-deps/setup.sh || { cat xnu-deps/exporthdrs.log; exit 1; }
 
@@ -59,6 +60,7 @@ jobs:
           kernel=xnu-src/xnu-8796.121.2/BUILD/obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837
           test -s "$kernel"
           strings -a "$kernel" | grep -F 'build deferred-spi-20261101' >/dev/null
+          strings -a "$kernel" | grep -F 'onyx-gen8: kernel-core-20261102' >/dev/null
           sha256sum "$kernel"
 
       - name: Publish the Onyx kernel

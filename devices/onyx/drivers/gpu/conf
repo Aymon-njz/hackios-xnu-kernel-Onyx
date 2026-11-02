@@ -1,0 +1,6 @@
+driver ONYX_GEN8_CORE
+	default n
+	file bsd/dev/hakios.onyx_gen8.c
+	file bsd/dev/hakios.onyx_gen8_firmware.c
+	file bsd/dev/hakios.onyx_gen8_hfi.c
+	help Gen8 firmware validation and HFI queues. onyx_gpu_stage=1 validates preloaded firmware after boot; no GPU hardware startup or acceleration yet.

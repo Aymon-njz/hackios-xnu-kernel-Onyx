@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - 'devices/onyx/drivers/gpu/**'
+      - 'xnu/files/bsd/dev/hakios.onyx_gen8*.h'
       - '.github/workflows/onyx-gen8-host.yml'
 jobs:
   firmware-parser:
@@ -12,13 +13,13 @@ jobs:
       - uses: actions/checkout@v4
       - name: Validate malformed firmware handling with sanitizers
         run: |
-          clang -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g \
-            devices/onyx/drivers/gpu/onyx_gen8_firmware.c \
+          clang -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g -Ixnu/files/bsd/dev \
+            devices/onyx/drivers/gpu/hakios.onyx_gen8_firmware.c \
             devices/onyx/drivers/gpu/firmware_test.c -o /tmp/onyx-gen8-firmware-test
           /tmp/onyx-gen8-firmware-test
       - name: Validate HFI queues with sanitizers
         run: |
-          clang -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g \
-            devices/onyx/drivers/gpu/onyx_gen8_hfi.c \
+          clang -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g -Ixnu/files/bsd/dev \
+            devices/onyx/drivers/gpu/hakios.onyx_gen8_hfi.c \
             devices/onyx/drivers/gpu/hfi_test.c -o /tmp/onyx-gen8-hfi-test
           /tmp/onyx-gen8-hfi-test

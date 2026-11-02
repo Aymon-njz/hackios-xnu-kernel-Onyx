@@ -1,4 +1,4 @@
-#include "onyx_gen8_hfi.h"
+#include "hakios.onyx_gen8_hfi.h"
 
 _Static_assert(sizeof(struct onyx_hfi_qheader) == 48, "HFI queue ABI");
 _Static_assert(sizeof(struct onyx_hfi_table) == 840, "HFI table ABI");

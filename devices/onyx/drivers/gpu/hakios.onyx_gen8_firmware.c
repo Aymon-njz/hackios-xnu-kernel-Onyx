@@ -1,4 +1,4 @@
-#include "onyx_gen8_firmware.h"
+#include "hakios.onyx_gen8_firmware.h"
 
 static uint32_t
 read_le32(const uint8_t *p)

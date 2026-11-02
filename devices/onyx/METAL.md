@@ -77,11 +77,13 @@ working on Onyx at this stage.
 
 ### Gen8 firmware component
 
-`drivers/gpu/onyx_gen8_firmware.{c,h}` under this device directory builds a
+`drivers/gpu/hakios.onyx_gen8_firmware.c` under this device directory builds a
 validated firmware load plan without touching hardware. It validates the whole
 image before publishing entries, separates metadata from code, checks virtual
 ranges and requires backing reservations for off-chip payloads. This is staging
-code for the backend; it is not yet linked into XNU and does not boot the GMU.
+code for the backend, selected by `CONFIG_HAKIOS_ONYX_GEN8_CORE=y` for XNU.
+It does not boot the GMU. Shared headers live in `xnu/files/bsd/dev/` so the
+standard apply step copies them into the kernel tree.
 
 The extracted Gen80600 image passes with 15 records: 11 metadata records and
 four payload blocks. The host test also checks truncation, malformed metadata,
@@ -93,8 +95,8 @@ The separate Gen8 host workflow runs both sanitizers on Linux without vendor blo
 From the repository root:
 
 ```
-cc -std=c11 -Wall -Wextra -Werror -fsanitize=undefined \
-  devices/onyx/drivers/gpu/onyx_gen8_firmware.c \
+cc -std=c11 -Wall -Wextra -Werror -fsanitize=undefined -Ixnu/files/bsd/dev \
+  devices/onyx/drivers/gpu/hakios.onyx_gen8_firmware.c \
   devices/onyx/drivers/gpu/firmware_test.c -o /tmp/onyx-gen8-fw-test
 /tmp/onyx-gen8-fw-test /path/to/private/gen80600_gmu.bin
 ```
@@ -104,11 +106,9 @@ interconnect votes, secure-world GPU register initialization, memory mappings,
 and HFI configuration before firmware start. Successful parsing does not satisfy
 those dependencies or provide a Metal device.
 
-### Metal library
-
 ### Gen8 HFI queue component
 
-`drivers/gpu/onyx_gen8_hfi.{c,h}` under this device directory implements the
+`drivers/gpu/hakios.onyx_gen8_hfi.c` under this device directory implements the
 host side of the Gen8 hardware-scheduler queue ABI. It initializes the three
 active queues within the 17-slot header table, sends variable-length commands,
 and receives messages/debug packets. Sizes and indices are in 32-bit words;
@@ -121,11 +121,17 @@ ring positions, padding, wraparound, full/empty queues, incomplete packets,
 output capacity and corrupted indices. Local UndefinedBehaviorSanitizer tests
 pass. Firmware boot, interrupt/doorbell wiring, HFI feature negotiation,
 acknowledgement tracking and GPU context submission are still missing. The queue
-component is not linked into XNU or exposed as a working HakiosGPU device.
+component is selected for XNU by `ONYX_GEN8_CORE`, but is not exposed as a
+working HakiosGPU device.
+
+`onyx_gpu_stage=1` opts into a deferred CPU-only check of the queue ABI and the
+preloaded `fw/gen80600_gmu.bin`, if present in a resident image. It issues no MMIO
+accesses or hardware doorbells. Missing firmware is reported and stops the check;
+no GPU power or acceleration is advertised. Normal boot does not run this check.
 
 ```
-cc -std=c11 -Wall -Wextra -Werror -fsanitize=undefined \
-  devices/onyx/drivers/gpu/onyx_gen8_hfi.c \
+cc -std=c11 -Wall -Wextra -Werror -fsanitize=undefined -Ixnu/files/bsd/dev \
+  devices/onyx/drivers/gpu/hakios.onyx_gen8_hfi.c \
   devices/onyx/drivers/gpu/hfi_test.c -o /tmp/onyx-gen8-hfi-test
 /tmp/onyx-gen8-hfi-test
 ```

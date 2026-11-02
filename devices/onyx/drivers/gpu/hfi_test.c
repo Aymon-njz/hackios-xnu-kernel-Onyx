@@ -1,4 +1,4 @@
-#include "onyx_gen8_hfi.h"
+#include "hakios.onyx_gen8_hfi.h"
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>

@@ -1,5 +1,5 @@
 /* Host-only validation; never linked into XNU. Optional argument: GMU image. */
-#include "onyx_gen8_firmware.h"
+#include "hakios.onyx_gen8_firmware.h"
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
