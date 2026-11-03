@@ -3,7 +3,7 @@ set -euo pipefail
 root=$(pwd)
 export XNU_AVAILABILITY_PL="$root/availability26/availability"
 deps="$root/out/deps"
-mkdir -p "$deps/usr/local/include" "$deps/System/Library/Frameworks/Kernel.framework/PrivateHeaders"
+mkdir -p "$deps/usr/local/include" "$deps/System/Library/Frameworks/Kernel.framework/Versions/A/PrivateHeaders"
 git clone --depth 1 --branch libplatform-375.120.2 https://github.com/apple-oss-distributions/libplatform.git libplatform26
 test "$(git -C libplatform26 rev-parse HEAD)" = b7ed7cf5cf7dd12b98672435db2225a860f199d8
 git clone --depth 1 --branch libdispatch-1542.100.32 https://github.com/apple-oss-distributions/libdispatch.git libdispatch26
@@ -14,7 +14,7 @@ git -C trustcache-ref sparse-checkout set EXTERNAL_HEADERS/TrustCache
 cp -R trustcache-ref/EXTERNAL_HEADERS/TrustCache kernel26/EXTERNAL_HEADERS/
 cp -R libplatform26/include/. "$deps/usr/local/include/"
 cp -R libplatform26/private/. "$deps/usr/local/include/"
-cp -R libplatform26/private/platform "$deps/System/Library/Frameworks/Kernel.framework/PrivateHeaders/"
+cp -R libplatform26/private/platform "$deps/System/Library/Frameworks/Kernel.framework/Versions/A/PrivateHeaders/"
 mkdir -p "$deps/usr/local/include/os"
 for header in libdispatch26/os/*.h; do
   status=0
