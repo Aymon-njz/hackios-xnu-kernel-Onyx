@@ -219,10 +219,10 @@ index 0000000..bc5c8f5
 +}
 diff --git a/bsd/dev/onyx_ufs.c b/bsd/dev/onyx_ufs.c
 new file mode 100644
-index 0000000..f3afe49
+index 0000000..690c575
 --- /dev/null
 +++ b/bsd/dev/onyx_ufs.c
-@@ -0,0 +1,1998 @@
+@@ -0,0 +1,1999 @@
 +/*
 + * The phone's storage: one block device and one character device for every GPT partition of its
 + * UFS (/dev/ufs_NAME and /dev/rufs_NAME, NAME as the partition table has it).
@@ -289,7 +289,8 @@ index 0000000..f3afe49
 +#include <vm/memory_types.h>
 +#include <vm/vm_kern_xnu.h>
 +#include <arm/machine_routines.h>
-+#include <arm/caches_internal.h>
++#include <arm64/onyx_dma.h>
++
 +#include "hakios.ufshc.h"
 +#include "hakios.onyx_journal.h"
 +
@@ -568,7 +569,7 @@ index 0000000..f3afe49
 +		 * core 0 drops its own lines of the buffer and hands it to UEFI's driver.
 +		 */
 +		memcpy(ufs_buffer, src, (size_t)bytes);
-+		FlushPoC_DcacheRegion((vm_offset_t)ufs_buffer, (size_t)bytes);
++		onyx_dma_clean((vm_offset_t)ufs_buffer, (size_t)bytes);
 +		ufs_last_part = ~0u;
 +	}
 +	ufs_page->ask.part = part;
@@ -632,7 +633,7 @@ index 0000000..f3afe49
 +	 * core may still hold of an earlier request -- a line brought in by a prefetch, say -- goes
 +	 * before the copy.
 +	 */
-+	FlushPoC_DcacheRegion((vm_offset_t)ufs_buffer, (size_t)bytes);
++	onyx_dma_clean((vm_offset_t)ufs_buffer, (size_t)bytes);
 +	memcpy(dst, ufs_buffer, (size_t)bytes);
 +	{
 +		uint64_t ns;
@@ -2047,7 +2048,7 @@ index 0000000..f3afe49
 +	if (!PE_parse_boot_argn("ufs_shared_pa", &pa, sizeof(pa)) || pa == 0) {
 +		return;                 /* the loader was not asked for ufs=2: there is nothing to read through */
 +	}
-+	base = ml_io_map_unmappable((vm_offset_t)(pa & ~(UFS_PAGE - 1)),
++	base = onyx_io_map_unmappable((vm_offset_t)(pa & ~(UFS_PAGE - 1)),
 +	    ((pa & (UFS_PAGE - 1)) + sizeof(struct loader_block) + UFS_PAGE - 1) & ~(UFS_PAGE - 1), VM_WIMG_WCOMB);
 +	ufs_page = (volatile struct loader_block *)(base + (pa & (UFS_PAGE - 1)));
 +	if (ufs_page->magic != BLOCK_MAGIC || ufs_page->version != BLOCK_VERSION ||
@@ -2059,7 +2060,7 @@ index 0000000..f3afe49
 +	ufs_parts = ufs_page->parts;
 +	ufs_buffer_size = ufs_page->buffer_size;
 +	buffer_pa = ufs_page->buffer_pa;
-+	ufs_buffer = (const uint8_t *)(ml_io_map_unmappable((vm_offset_t)(buffer_pa & ~(UFS_PAGE - 1)),
++	ufs_buffer = (const uint8_t *)(onyx_io_map_unmappable((vm_offset_t)(buffer_pa & ~(UFS_PAGE - 1)),
 +	    ((buffer_pa & (UFS_PAGE - 1)) + ufs_buffer_size + UFS_PAGE - 1) & ~(UFS_PAGE - 1), VM_WIMG_DEFAULT) +
 +	    (buffer_pa & (UFS_PAGE - 1)));
 +	ufs_seq = ufs_page->answer.answered;      /* a loader that served an earlier kernel counts on from there */
@@ -2223,7 +2224,7 @@ index 0000000..f3afe49
 +}
 diff --git a/bsd/dev/onyx_ufshc.c b/bsd/dev/onyx_ufshc.c
 new file mode 100644
-index 0000000..b3bb869
+index 0000000..9fb548f
 --- /dev/null
 +++ b/bsd/dev/onyx_ufshc.c
 @@ -0,0 +1,1400 @@
@@ -2296,8 +2297,8 @@ index 0000000..b3bb869
 +#include <sys/sysctl.h>
 +#include <vm/vm_kern_xnu.h>
 +#include <arm/machine_routines.h>
-+#include <arm/pmap.h>
-+#include <arm/caches_internal.h>
++#include <arm64/onyx_dma.h>
++
 +#include <vm/memory_types.h>
 +#include "hakios.ufshc.h"
 +#include "hakios.onyx_journal.h"
@@ -3033,7 +3034,7 @@ index 0000000..b3bb869
 +			}
 +			hc_make_read(&c, lun, (uint8_t)s->number, (uint32_t)first, (uint32_t)blocks);
 +			/* nothing of the buffer is left in a cache to be written back over what the controller writes */
-+			FlushPoC_DcacheRegion((vm_offset_t)s->data, (size_t)blocks * BLOCK);
++			onyx_dma_clean((vm_offset_t)s->data, (size_t)blocks * BLOCK);
 +			e = hc_place(s, &c, (uint32_t)blocks * BLOCK);
 +			if (e == 0) {
 +				e = hc_ring(s);
@@ -3067,7 +3068,7 @@ index 0000000..b3bb869
 +			snprintf(what, sizeof(what), "LUN %u, blocks %u..%u", lun, e->lba, e->lba + e->blocks - 1);
 +			r = hc_complete(e->slot, what, false);
 +			if (r == 0) {
-+				FlushPoC_DcacheRegion((vm_offset_t)e->slot->data, (size_t)e->blocks * BLOCK);
++				onyx_dma_clean((vm_offset_t)e->slot->data, (size_t)e->blocks * BLOCK);
 +				os_atomic_inc(&hc_requests, relaxed);
 +				os_atomic_add(&hc_bytes, (uint64_t)e->blocks * BLOCK, relaxed);
 +				if (error == 0) {
@@ -3111,7 +3112,7 @@ index 0000000..b3bb869
 +	slot->journal_blocks = blocks;
 +	slot->journal_write = true;
 +	memcpy(slot->data, data, bytes);
-+	FlushPoC_DcacheRegion((vm_offset_t)slot->data, bytes);
++	onyx_dma_clean((vm_offset_t)slot->data, bytes);
 +	int error = hc_place(slot, &command, bytes);
 +	if (!error) error = hc_ring(slot);
 +	if (!error) error = hc_complete(slot, "Onyx diagnostic journal WRITE(10) FUA", false);
@@ -3454,11 +3455,11 @@ index 0000000..b3bb869
 +		    loader->ucd_offset, loader->ucd_size);
 +		return false;
 +	}
-+	if (pmap_valid_address(loader->area_pa) || pmap_valid_address(loader->area_pa + loader->area_size - 1)) {
++	if (onyx_dma_address_is_ram(loader->area_pa) || onyx_dma_address_is_ram(loader->area_pa + loader->area_size - 1)) {
 +		hc_say("ufs: native: not used: the loader's area %llx is memory this kernel manages\n", loader->area_pa);
 +		return false;
 +	}
-+	hc = ml_io_map(UFSHC_PHYS, UFSHC_SIZE);
++	hc = onyx_io_map(UFSHC_PHYS, UFSHC_SIZE);
 +	cap = hc_read(UFSHC_CAP);
 +	ver = hc_read(UFSHC_VER);
 +	hcs = hc_read(UFSHC_HCS);
@@ -3505,14 +3506,14 @@ index 0000000..b3bb869
 +		no = "the transfer list is not the one the loader noted as UEFI's";
 +	} else if (db != 0) {
 +		no = "a request in flight";
-+	} else if (pmap_valid_address(uefi_pa)) {
++	} else if (onyx_dma_address_is_ram(uefi_pa)) {
 +		no = "UEFI's transfer list is in memory this kernel manages";
 +	}
 +	if (no == NULL) {
 +		/* UEFI's list and command descriptor (the page they are in), not cached here, only read */
 +		hc_uefi_map_pa = uefi_pa & ~(uint64_t)PAGE_MASK;
 +		hc_uefi_map_size = PAGE_SIZE;
-+		hc_uefi_map_va = ml_io_map_unmappable((vm_offset_t)hc_uefi_map_pa, PAGE_SIZE, VM_WIMG_WCOMB);
++		hc_uefi_map_va = onyx_io_map_unmappable((vm_offset_t)hc_uefi_map_pa, PAGE_SIZE, VM_WIMG_WCOMB);
 +		hc_uefi_list = (volatile uint32_t *)(hc_uefi_map_va + (uefi_pa - hc_uefi_map_pa));
 +		hc_say("ufs: native: UEFI's slot 0: %08x %08x %08x %08x %08x %08x %08x %08x\n", hc_uefi_list[0], hc_uefi_list[1],
 +		    hc_uefi_list[2], hc_uefi_list[3], hc_uefi_list[4], hc_uefi_list[5], hc_uefi_list[6], hc_uefi_list[7]);
@@ -3532,7 +3533,7 @@ index 0000000..b3bb869
 +	}
 +
 +	/* this kernel's list and command descriptors, in the loader's area; every slot TEST UNIT READY to begin with */
-+	area = ml_io_map_unmappable((vm_offset_t)(loader->area_pa & ~(uint64_t)PAGE_MASK),
++	area = onyx_io_map_unmappable((vm_offset_t)(loader->area_pa & ~(uint64_t)PAGE_MASK),
 +	    (vm_size_t)round_page((loader->area_pa & PAGE_MASK) + loader->area_size), VM_WIMG_WCOMB) +
 +	    (vm_offset_t)(loader->area_pa & PAGE_MASK);
 +	hc_list_lo = (uint32_t)loader->area_pa;
@@ -3554,8 +3555,8 @@ index 0000000..b3bb869
 +				return false;
 +			}
 +			s->data = (uint8_t *)data;
-+			s->data_pa = kvtophys(data);
-+			FlushPoC_DcacheRegion(data, hc_slot_buffer);
++			s->data_pa = onyx_dma_physical(data);
++			onyx_dma_clean(data, hc_slot_buffer);
 +		}
 +		hc_make_tur(&c, 0, (uint8_t)i);
 +		if (hc_place(s, &c, 0) != 0) {
@@ -3815,10 +3816,10 @@ index 0000000..fa3d43f
 +options   CONFIG_KERNEL_TAGGING		# <kernel_tagging>
 diff --git a/iokit/Kernel/OnyxARMPE.cpp b/iokit/Kernel/OnyxARMPE.cpp
 new file mode 100644
-index 0000000..bfe993c
+index 0000000..e160389
 --- /dev/null
 +++ b/iokit/Kernel/OnyxARMPE.cpp
-@@ -0,0 +1,325 @@
+@@ -0,0 +1,318 @@
 +/*
 + * OnyxARMPE: a minimal platform expert for non-Apple ARMv8 boards.
 + *
@@ -3848,13 +3849,6 @@ index 0000000..bfe993c
 +void gic_v3_irq_signal(uint32_t phys_id);
 +}
 +
-+/* osfmk/arm64/psci_smp.c and gic_v3_irq.c */
-+void psci_smp_init(void);
-+kern_return_t psci_smp_start_cpu(int cpu);
-+void psci_smp_cpu_running(void);
-+void psci_smp_cpu_off(void) __dead2;
-+void gic_v3_irq_signal(uint32_t phys_id);
-+}
 +
 +/*
 + * OnyxARMCPU: registers a device-tree CPU node with the kernel. The closed
@@ -4027,7 +4021,7 @@ index 0000000..bfe993c
 +        OSObject *obj;
 +        while ((obj = iter->getNextObject()) != NULL) {
 +            IOService *nub = OSDynamicCast(IOService, obj);
-+            if (!nub || OnyxARMCPU::cpuNumberOfNub(nub) != master_cpu) continue;
++            if (!nub || OnyxARMCPU::cpuNumberOfNub(nub) != ml_get_boot_cpu_number()) continue;
 +            OnyxARMCPU *cpu = new OnyxARMCPU;
 +            if (cpu && cpu->init() && cpu->attach(nub)) {
 +                if (cpu->start(nub)) { bootCPU = cpu; break; }
@@ -4217,7 +4211,7 @@ index 3534454..323c3a3 100644
  .SFLAGS: ALWAYS
  	$(_v)$(REPLACECONTENTS) $@ $(S_KCC) $(SFLAGS) $(INCFLAGS)
 diff --git a/makedefs/MakeInc.def b/makedefs/MakeInc.def
-index e37762b..56f227e 100644
+index e37762b..4f1a84b 100644
 --- a/makedefs/MakeInc.def
 +++ b/makedefs/MakeInc.def
 @@ -29,7 +29,7 @@ SUPPORTED_ARM64_MACHINE_CONFIGS = NONE
@@ -4237,7 +4231,25 @@ index e37762b..56f227e 100644
  MACHINE_FLAGS_ARM64_T8101 = -DARM64_BOARD_CONFIG_T8101			-mcpu=apple-a14
  MACHINE_FLAGS_ARM64_T8103 = -DARM64_BOARD_CONFIG_T8103                  -mcpu=apple-a14
  MACHINE_FLAGS_ARM64_T6000 = -DARM64_BOARD_CONFIG_T6000			-mcpu=apple-a14
-@@ -1151,8 +1152,11 @@ LD_KERNEL_LIBS	   = -lcc_kext
+@@ -1119,9 +1120,17 @@ LDFLAGS_KERNEL_ONLY_CONFIG_DEBUGARM64 = $(LDFLAGS_KERNEL_ONLY_CONFIG_DEVELOPMENT
+ # arm64e specific linker flags that should be used only when linking the kernel
+ # (and not the static kernel cache / kcgen)
+ #
++ifeq ($(XNU_KERNEL_CHAINED_FIXUPS),1)
+ LDFLAGS_KERNEL_ONLY_SUBARCH_arm64e = \
+ 	-Wl,-add_split_seg_info \
+ 	-Wl,-kernel
++else
++# A standalone arm64e MH_EXECUTE boots without a kernel collection builder:
++# arm_init rebases and signs __TEXT,__thread_starts, which only ld-classic emits.
++LDFLAGS_KERNEL_ONLY_SUBARCH_arm64e = \
++	-fuse-ld=$(shell $(XCRUN) -sdk $(SDKROOT) -find ld-classic) \
++	-Wl,-threaded_starts_section
++endif
+ 
+ LDFLAGS_KERNEL_ONLY_SUBARCH_x86_64 = \
+ 	-Wl,-add_split_seg_info \
+@@ -1151,8 +1160,11 @@ LD_KERNEL_LIBS	   = -lcc_kext
  LD_KERNEL_ARCHIVES = $(LDFLAGS_KERNEL_SDK) -lfirehose_kernel
  
  # Link binary support library
@@ -4250,14 +4262,14 @@ index e37762b..56f227e 100644
  endif
  
  #
-@@ -1604,3 +1608,9 @@ INSTALL_KASAN_ONLY = 1
+@@ -1604,3 +1616,9 @@ INSTALL_KASAN_ONLY = 1
  endif
  
  # vim: set ft=make:
 +
 +# Isolated source dependency headers/libraries; never modify the host SDK.
 +ifneq ($(ONYX_DEPS_ROOT),)
-+INCFLAGS_SDK += -I$(ONYX_DEPS_ROOT)/usr/local/include -I$(ONYX_DEPS_ROOT)/System/Library/Frameworks/Kernel.framework/PrivateHeaders
++INCFLAGS_SDK += -I$(ONYX_DEPS_ROOT)/usr/local/include/kernel -I$(ONYX_DEPS_ROOT)/usr/local/include -I$(ONYX_DEPS_ROOT)/System/Library/Frameworks/Kernel.framework/PrivateHeaders
 +LDFLAGS_KERNEL_SDK += -L$(ONYX_DEPS_ROOT)/usr/local/lib/kernel
 +endif
 diff --git a/makedefs/MakeInc.kernel b/makedefs/MakeInc.kernel
@@ -4605,6 +4617,18 @@ index f9e841f..0c6ba7c 100644
  #else /* defined(ARM_LARGE_MEMORY) */
  #define BOOTSTRAP_TABLE_SIZE (ARM_PGBYTES * 8)
  #endif /* defined(ARM_LARGE_MEMORY) */
+diff --git a/osfmk/arm64/Makefile b/osfmk/arm64/Makefile
+index 60f4224..1dbc2f5 100644
+--- a/osfmk/arm64/Makefile
++++ b/osfmk/arm64/Makefile
+@@ -46,6 +46,7 @@ INSTALL_SF_MD_LCL_LIST = \
+ 
+ # Headers used to compile xnu
+ EXPORT_MD_LIST = \
++	onyx_dma.h \
+ 	cpc_arm64.h \
+ 	hv_hvc.h \
+ 	lowglobals.h \
 diff --git a/osfmk/arm64/arm_vm_init.c b/osfmk/arm64/arm_vm_init.c
 index 756af52..0ac4b57 100644
 --- a/osfmk/arm64/arm_vm_init.c
@@ -4750,6 +4774,58 @@ index 0000000..8fc68cd
 +        ((unsigned char *)out)[n] = r->bytes[(first + n) & (ONYX_BOOTLOG_CAPACITY - 1)];
 +    return count;
 +}
++#endif
+diff --git a/osfmk/arm64/onyx_dma.c b/osfmk/arm64/onyx_dma.c
+new file mode 100644
+index 0000000..3762fd9
+--- /dev/null
++++ b/osfmk/arm64/onyx_dma.c
+@@ -0,0 +1,28 @@
++/* Keep private pmap/cache interfaces in the machine layer, not BSD drivers. */
++#include <mach/mach_types.h>
++#include <vm/pmap.h>
++#include <arm/machine_routines.h>
++#include <arm/caches_internal.h>
++#include <arm64/onyx_dma.h>
++_Static_assert(sizeof(pmap_paddr_t) == sizeof(uint64_t), "Onyx DMA physical address width");
++uint64_t onyx_dma_physical(vm_offset_t address)
++{
++    return kvtophys(address);
++}
++bool onyx_dma_address_is_ram(uint64_t address)
++{
++    return pmap_valid_address((pmap_paddr_t)address) != 0;
++}
++void onyx_dma_clean(vm_offset_t address, size_t length)
++{
++    FlushPoC_DcacheRegion(address, length);
++}
++
++vm_offset_t onyx_io_map(vm_offset_t address, vm_size_t length)
++{
++    return ml_io_map(address, length);
++}
++vm_offset_t onyx_io_map_unmappable(vm_offset_t address, vm_size_t length, uint32_t flags)
++{
++    return ml_io_map_unmappable(address, length, flags);
++}
+diff --git a/osfmk/arm64/onyx_dma.h b/osfmk/arm64/onyx_dma.h
+new file mode 100644
+index 0000000..e6a37ad
+--- /dev/null
++++ b/osfmk/arm64/onyx_dma.h
+@@ -0,0 +1,12 @@
++#ifndef ONYX_DMA_H
++#define ONYX_DMA_H
++#include <stdint.h>
++#include <stddef.h>
++#include <stdbool.h>
++#include <mach/mach_types.h>
++vm_offset_t onyx_io_map(vm_offset_t address, vm_size_t length);
++vm_offset_t onyx_io_map_unmappable(vm_offset_t address, vm_size_t length, uint32_t flags);
++uint64_t onyx_dma_physical(vm_offset_t address);
++bool onyx_dma_address_is_ram(uint64_t address);
++void onyx_dma_clean(vm_offset_t address, size_t length);
 +#endif
 diff --git a/osfmk/arm64/onyx_gic_geometry.h b/osfmk/arm64/onyx_gic_geometry.h
 new file mode 100644
@@ -5497,7 +5573,7 @@ index e23dabe..6db9a38 100644
  .SFLAGS: ALWAYS
  	$(_v)$(REPLACECONTENTS) $@ $(S_KCC) $(SFLAGS) $(INCFLAGS)
 diff --git a/osfmk/conf/files.arm64 b/osfmk/conf/files.arm64
-index 878b515..ab2f4b2 100644
+index 878b515..17b7916 100644
 --- a/osfmk/conf/files.arm64
 +++ b/osfmk/conf/files.arm64
 @@ -35,10 +35,10 @@ osfmk/arm64/WKdmCompress_4k.s	standard
@@ -5515,7 +5591,7 @@ index 878b515..ab2f4b2 100644
  osfmk/arm64/bcopy.s standard
  osfmk/arm64/bzero.s standard
  osfmk/arm/caches.c		standard
-@@ -129,3 +129,7 @@ osfmk/kern/ecc_init.c		standard
+@@ -129,3 +129,8 @@ osfmk/kern/ecc_init.c		standard
  osfmk/kern/ecc_logging.c	optional config_ecc_logging
  
  osfmk/kern/memory_error_logging.c	standard
@@ -5523,6 +5599,7 @@ index 878b515..ab2f4b2 100644
 +# Onyx XNU 12377 Group 1 interrupt adapter (disabled on other boards).
 +osfmk/arm64/onyx_gic_v3.c standard
 +osfmk/arm64/onyx_bootlog.c standard
++osfmk/arm64/onyx_dma.c standard
 diff --git a/osfmk/console/serial_console.c b/osfmk/console/serial_console.c
 index 7784e72..6e15fc7 100644
 --- a/osfmk/console/serial_console.c

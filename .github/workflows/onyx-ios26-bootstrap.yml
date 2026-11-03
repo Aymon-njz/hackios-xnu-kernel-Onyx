@@ -62,5 +62,8 @@ jobs:
             out/obj/**/onyx_gic_v3.o
             out/obj/**/*.iig.cpp
             out/obj/**/DriverKit/*.h
+            out/obj/**/Tests/TestServices/*.h
+            out/obj/**/onyx_*.o
+            out/obj/**/OnyxARMPE.cpo
             out/obj/**/mach.development.bcm2837*
           if-no-files-found: warn
