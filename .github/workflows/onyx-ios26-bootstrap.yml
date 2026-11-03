@@ -1,6 +1,9 @@
 name: Onyx XNU 12377 bootstrap build
 on:
   workflow_dispatch:
+  push:
+    branches: [onyx/ios26-bootstrap]
+    paths: [ios26/**, .github/workflows/onyx-ios26-bootstrap.yml]
 permissions:
   contents: read
 jobs:
