@@ -4,6 +4,9 @@ on:
   push:
     branches: [onyx/ios26-bootstrap]
     paths: [ios26/**, .github/workflows/onyx-ios26-bootstrap.yml]
+concurrency:
+  group: onyx-ios26-bootstrap
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:

@@ -34,7 +34,18 @@ python3 - <<'PY'
 from pathlib import Path
 p=Path('libdispatch26/xcodeconfig/libfirehose_kernel.xcconfig')
 s=p.read_text().replace('$(SDKROOT)/System/Library/Frameworks/Kernel.framework','$(ONYX_DEPS_ROOT)/System/Library/Frameworks/Kernel.framework').replace('$(SDKROOT)/usr/local/include','$(ONYX_DEPS_ROOT)/usr/local/include')
-s=s.replace('HEADER_SEARCH_PATHS =', 'HEADER_SEARCH_PATHS = $(SDKROOT)/usr/include $(ONYX_DEPS_ROOT)/usr/local/include $(PROJECT_DIR)/../kernel26/EXTERNAL_HEADERS ')
+lines=s.splitlines()
+for n,line in enumerate(lines):
+    if line.startswith('HEADER_SEARCH_PATHS ='):
+        lines[n] = ('HEADER_SEARCH_PATHS = $(PROJECT_DIR) '
+          '$(ONYX_DEPS_ROOT)/System/Library/Frameworks/Kernel.framework/PrivateHeaders '
+          '$(ONYX_DEPS_ROOT)/System/Library/Frameworks/Kernel.framework/Headers '
+          '$(ONYX_DEPS_ROOT)/usr/local/include/kernel '
+          '$(ONYX_DEPS_ROOT)/usr/local/include/os '
+          '$(ONYX_DEPS_ROOT)/usr/local/include/firehose '
+          '$(PROJECT_DIR)/../kernel26/EXTERNAL_HEADERS '
+          '$(ONYX_DEPS_ROOT)/usr/local/include $(SDKROOT)/usr/include')
+s='\n'.join(lines)+'\n'
 p.write_text(s)
 PY
 xcodebuild install -project libdispatch26/libdispatch.xcodeproj -target libfirehose_kernel \
