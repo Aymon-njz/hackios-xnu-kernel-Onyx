@@ -9,3 +9,6 @@
 # the context lines of its hunks carry them (BootManager.c, BootManagerLib.inf). Turning them into LF
 # would make the patch fail to apply.
 *.patch -text
+
+# Unified diff context intentionally starts with a space.
+ios26/bootstrap.patch -whitespace

@@ -48,12 +48,7 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p out
-          export XNU_AVAILABILITY_PL="$PWD/availability26/availability"
-          make -C kernel26 SDKROOT=macosx KDKROOT="$PWD/kdk-expanded/KDK.pkg/Payload" \
-            TARGET_CONFIGS='DEVELOPMENT ARM64 BCM2837' PLATFORM=iPhoneOS PLATFORM_FOR_CONFIG=iPhoneOS \
-            SDKVERSION=26.5 RC_DARWIN_KERNEL_VERSION=25.5.0 BUILD_LTO=0 BUILD_WERROR=0 \
-            OBJROOT="$PWD/out/obj" SYMROOT="$PWD/out/sym" DSTROOT="$PWD/out/dst" \
-            -j3 build 2>&1 | tee out/build-attempt.log
+          bash ios26/build-macos.sh 2>&1 | tee out/build-attempt.log
       - name: Retain build evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -62,5 +57,7 @@ jobs:
           path: |
             out/build-attempt.log
             out/obj/**/onyx_gic_v3.o
+            out/obj/**/*.iig.cpp
+            out/obj/**/DriverKit/*.h
             out/obj/**/mach.development.bcm2837*
           if-no-files-found: warn
