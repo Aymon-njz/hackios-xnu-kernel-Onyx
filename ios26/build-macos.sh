@@ -49,10 +49,10 @@ s='\n'.join(lines)+'\n'
 p.write_text(s)
 PY
 xcodebuild install -project libdispatch26/libdispatch.xcodeproj -target libfirehose_kernel \
-  -configuration Release -sdk iphoneos -arch arm64 IPHONEOS_DEPLOYMENT_TARGET=26.5 \
+  -configuration Release -sdk iphoneos -arch arm64e ARCHS=arm64e VALID_ARCHS=arm64e IPHONEOS_DEPLOYMENT_TARGET=26.5 \
   CODE_SIGNING_ALLOWED=NO GCC_TREAT_WARNINGS_AS_ERRORS=NO \
   OBJROOT="$root/out/firehose-obj" SYMROOT="$root/out/firehose-sym" DSTROOT="$deps" \
-  ONYX_DEPS_ROOT="$deps" OTHER_CFLAGS='$(inherited) -mcpu=generic -march=armv8-a+crypto'
+  ONYX_DEPS_ROOT="$deps" OTHER_CFLAGS='$(inherited) -mcpu=generic -march=armv8.3-a+crypto'
 if [ -f "$deps/usr/local/lib/kernel/liblibfirehose_kernel.a" ]; then
   cp "$deps/usr/local/lib/kernel/liblibfirehose_kernel.a" "$deps/usr/local/lib/kernel/libfirehose_kernel.a"
 fi
