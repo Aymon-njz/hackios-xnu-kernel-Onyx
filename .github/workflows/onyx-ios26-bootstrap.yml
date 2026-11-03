@@ -1,0 +1,63 @@
+name: Onyx XNU 12377 bootstrap build
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  kernel:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - name: Check full Xcode tools
+        run: |
+          xcodebuild -version
+          xcrun --find iig
+          xcrun --find migcom
+          df -h .
+      - name: Fetch pinned XNU and availability generator
+        run: |
+          git clone --depth 1 --branch xnu-12377.121.6 https://github.com/apple-oss-distributions/xnu.git kernel26
+          test "$(git -C kernel26 rev-parse HEAD)" = ac9718fb1af618d5ce8678d0dc6e8a58f252216f
+          git -C kernel26 apply ../ios26/bootstrap.patch
+          git clone --depth 1 --branch AvailabilityVersions-157.2 https://github.com/apple-oss-distributions/AvailabilityVersions.git availability26
+          test "$(git -C availability26 rev-parse HEAD)" = 149b1777f3e8c2133042d8e188f72e3adf6a7110
+          sh kernel26/onyx-tests/run.sh
+      - name: Extract verified Apple KDK into workspace
+        run: |
+          curl -fLsS --retry 3 -o kdk.dmg https://github.com/dortania/KdkSupportPkg/releases/download/25F71/Kernel_Debug_Kit_26.5_build_25F71.dmg
+          python3 - <<'PY'
+          import hashlib
+          from pathlib import Path
+          with Path('kdk.dmg').open('rb') as f:
+              assert hashlib.file_digest(f, 'sha256').hexdigest() == '90ed319cd1ba6e23d1eefcee89fa1b10743f4cf60b85208ae52aa9f45543c7aa'
+          PY
+          hdiutil attach -readonly -nobrowse -mountpoint "$PWD/kdk-mount" kdk.dmg
+          pkgutil --check-signature "$PWD/kdk-mount/KernelDebugKit.pkg"
+          pkgutil --expand-full "$PWD/kdk-mount/KernelDebugKit.pkg" "$PWD/kdk-expanded"
+          hdiutil detach "$PWD/kdk-mount"
+          cp -R kdk-expanded/KDK_SDK.pkg/Payload/. kdk-expanded/KDK.pkg/Payload/
+      - name: Generate headers and attempt kernel build
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p out
+          export XNU_AVAILABILITY_PL="$PWD/availability26/availability"
+          make -C kernel26 SDKROOT=macosx KDKROOT="$PWD/kdk-expanded/KDK.pkg/Payload" \
+            TARGET_CONFIGS='DEVELOPMENT ARM64 BCM2837' PLATFORM=iPhoneOS PLATFORM_FOR_CONFIG=iPhoneOS \
+            SDKVERSION=26.5 RC_DARWIN_KERNEL_VERSION=25.5.0 BUILD_LTO=0 BUILD_WERROR=0 \
+            OBJROOT="$PWD/out/obj" SYMROOT="$PWD/out/sym" DSTROOT="$PWD/out/dst" \
+            -j3 build 2>&1 | tee out/build-attempt.log
+      - name: Retain build evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: onyx-xnu12377-build-evidence
+          path: |
+            out/build-attempt.log
+            out/obj/**/onyx_gic_v3.o
+            out/obj/**/mach.development.bcm2837*
+          if-no-files-found: warn
