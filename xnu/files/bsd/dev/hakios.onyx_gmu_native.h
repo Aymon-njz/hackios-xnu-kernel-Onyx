@@ -3,6 +3,7 @@
 #include "hakios.onyx_gmu_start.h"
 #include "hakios.onyx_gmu_exchange.h"
 #include "hakios.onyx_gmu_scm.h"
+#include "hakios.onyx_qtb.h"
 /* Platform-owned MMIO, acquired while CX is powered and CM3 held in reset.
  * These operations are not implemented by the allocator. Missing operations
  * fail before attachment. Call once, serialized; buffers survive all failures.
@@ -14,7 +15,7 @@ struct onyx_gmu_platform {
  struct onyx_scm *scm;
  unsigned secure_features;
  void *context;
- int (*verify_translation)(void *, const struct onyx_gmu_attachment *);
+ struct onyx_qtb_io *qtb;
  int (*configure)(void *, uint32_t hfi_address, struct onyx_gmu_start_ready *);
  void (*event)(void *, const uint32_t *, size_t);
 };

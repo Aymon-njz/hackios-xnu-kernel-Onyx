@@ -68,4 +68,11 @@ onyx_gen8_power_missing(uint32_t cx, uint32_t gmu, uint32_t cxo,
 	if (gmu_rcg & (1u << 31)) missing |= ONYX_GMU_RCG_OFF;
 	return missing;
 }
+/* Switch already-running TCXO roots to 500MHz GMU / 200MHz HUB.
+ * Requires independently established voltage votes and a verified 600MHz
+ * GPLL0 parent. GPU PLL0 must already be locked at 1GHz with /2 output.
+ * Does not initialize/calibrate PLL0 or establish bandwidth votes.
+ */
+enum onyx_clock_result onyx_gen8_clocks_operating(struct onyx_rsc_io *,
+ unsigned supplies_ready, unsigned gpll0_600mhz_verified);
 #endif

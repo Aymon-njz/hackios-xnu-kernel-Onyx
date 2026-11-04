@@ -7,12 +7,24 @@ on:
       - 'xnu/files/bsd/dev/hakios.onyx_gen8*.h'
       - 'xnu/files/bsd/dev/hakios.onyx_gmu*.h'
       - 'tools/onyx-gmu-*-test.c'
+      - 'tools/onyx-qtb-test.c'
+      - 'xnu/files/bsd/dev/hakios.onyx_qtb.h'
       - '.github/workflows/onyx-gen8-host.yml'
 jobs:
   firmware-parser:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - name: Validate QTB translation and operating clock transports
+        run: |
+          clang -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \
+            -Ixnu/files/bsd/dev devices/onyx/drivers/gpu/hakios.onyx_qtb.c \
+            tools/onyx-qtb-test.c -o /tmp/onyx-qtb-test
+          /tmp/onyx-qtb-test
+          clang -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \
+            -Ixnu/files/bsd/dev devices/onyx/drivers/gpu/hakios.onyx_gen8_power.c \
+            tools/onyx-gmu-operating-clock-test.c -o /tmp/onyx-gmu-operating-clock-test
+          /tmp/onyx-gmu-operating-clock-test
       - name: Validate secure CX protocol and ARM64 transport
         run: |
           clang -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \

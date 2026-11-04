@@ -10,6 +10,7 @@ driver ONYX_GEN8_CORE
 	file bsd/dev/hakios.onyx_gmu_native.c
 	file bsd/dev/hakios.onyx_gmu_attach.c
 	file bsd/dev/hakios.onyx_gmu_start.c
+	file bsd/dev/hakios.onyx_qtb.c
 	file bsd/dev/hakios.onyx_gmu_scm.c
 	file bsd/dev/hakios.onyx_gmu_rscc.c
 	file bsd/dev/hakios.onyx_gmu_upload.c

@@ -69,7 +69,7 @@ static unsigned native_start_attempted;
 int onyx_gmu_native_start(const void *firmware,size_t bytes,struct onyx_gmu_platform *p)
 {
  /* No boot argument may manufacture these platform operations or lease. */
- if (!p || !p->smmu || !p->gpu || !p->control || !p->verify_translation ||
+ if (!p || !p->smmu || !p->gpu || !p->control || !p->qtb ||
      !p->configure || !p->event || !p->scm || native_start_attempted) return -1;
  if (!p->lease.handoff_verified || !p->lease.cm3_reset_verified) return -1;
  int rc=onyx_gmu_native_prepare(firmware,bytes);
@@ -80,7 +80,20 @@ int onyx_gmu_native_start(const void *firmware,size_t bytes,struct onyx_gmu_plat
  printf("onyx-gen8: native SMMU attach result %d\n",rc);
  if(rc) return -2;
  /* Software table walks do not satisfy this hardware translation check. */
- if(p->verify_translation(p->context,&native_attachment)) return -3;
+ for(size_t n=0;n<native_memory.count;n++) {
+  const struct onyx_gmu_backing *b=&native_memory.region[n];
+  for(size_t page=0;page<b->bytes;page+=4096) {
+   struct onyx_qtb_result translated={0};
+   rc=onyx_qtb_translate(p->qtb,b->va+(uint32_t)page,0,0,&translated);
+   if(rc || translated.address_field!=b->pa+page) {
+    printf("onyx-gen8: QTB translation failed VA %#x status %d raw %#llx expected %#llx\n",
+        b->va+(uint32_t)page,rc,translated.raw_output,b->pa+page);
+    p->qtb->quarantined=1;
+    return -3;
+   }
+  }
+ }
+ printf("onyx-gen8: QTB SID5 read translations match all firmware/HFI pages\n");
  struct onyx_gmu_upload_report upload;
  rc=onyx_gmu_upload_tcm(p->gpu,firmware,bytes,native_upload_blocks,64,&upload);
  printf("onyx-gen8: TCM upload result %d words %u offset %#x\n",rc,

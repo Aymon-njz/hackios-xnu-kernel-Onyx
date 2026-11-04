@@ -348,3 +348,27 @@ there is no boot-stage platform adapter, proven live SMMU ownership/translation,
 operating clock and bandwidth implementation, verified GPU submission, or Gen8
 Metal shader/render backend. Do not label a kernel containing these components
 an acceleration-enabled image.
+
+### QTB translation and operating root switch
+
+Recovery FDT identifies GPU QTB500 at0x03de8000 with SID range0..0x3ff.
+Added its native 64-bit ECATS transport from the pinned SM8735 kernel's
+arm-smmu-qcom.c: halt/ACK, privileged nonsecure SID5 probe, completion/fault
+check, trigger reset and resume. Native startup compares the stock PA field
+against every allocated firmware/HFI page. It is not a software-walk substitute.
+Platform code still must supply powered QTB access and the context fault setup;
+no live probe has been executed. Simulated success, timeout, busy and fault
+paths pass UBSan.
+
+Added GMU500MHz/HUB200MHz root switching using Tuna's parent/divider table.
+It validates an already-running 1GHz GPU PLL0 with /2 output and requires a
+verified GPLL0 600MHz parent plus established supply votes. It does not perform
+cold PLL calibration or bandwidth votes. Tests check refusal of an unlocked
+PLL, successful switches, rejected config and timeout rollback.
+
+Kernel and host CI for c3b03d5 both passed. The new QTB/clock changes have only
+host tests at this point. Recovery dmesg reports GPU SMMU 22 banks,24 groups,
+36-bit output and zero preserved boot mappings; this is Android's boot state,
+not proof of context ownership in a later XNU handoff. Recovery has no active
+KGSL class device from which to verify a live GPU workload. GPU execution and
+bandwidth remain unimplemented; no acceleration-ready test image is claimed.

@@ -198,3 +198,45 @@ enum onyx_clock_result onyx_gen8_smmu_clock(struct onyx_rsc_io *io)
  io->quarantined=1;
  return ONYX_CLOCK_TIMEOUT;
 }
+
+/* Tuna frequency table: GMU parent2 (/2 PLL0), div1; HUB parent5
+ * (GPLL0 600MHz), div3. Both must start on the tested TCXO path. */
+enum onyx_clock_result onyx_gen8_clocks_operating(struct onyx_rsc_io *io,
+ unsigned supplies_ready,unsigned gpll0_600mhz_verified)
+{
+ if(!io || !io->read || !io->write || !io->delay_us || !io->owned || io->quarantined ||
+     supplies_ready!=1 || gpll0_600mhz_verified!=1) return ONYX_CLOCK_ARGUMENT;
+ if((io->read(io->context,0x9080)&0x80000001u)!=0x80000000u) return ONYX_CLOCK_CX_OFF;
+ uint32_t mode=io->read(io->context,0),user=io->read(io->context,0x18);
+ uint64_t rate=19200000ULL*(io->read(io->context,0x10)&0xffffu)+
+     ((19200000ULL*(io->read(io->context,0x14)&0xffffu))>>16);
+ if((mode&0x80000005u)!=0x80000005u || io->read(io->context,4)!=1 ||
+     ((user>>10)&15)!=1 || !(user&2) || rate<999999000ULL || rate>1000001000ULL)
+  return ONYX_CLOCK_ARGUMENT;
+ const uint32_t root[2]={0x93ec,0x9318},target[2]={0x505,0x201};
+ uint32_t saved[2];
+ for(unsigned n=0;n<2;n++) {
+  saved[n]=io->read(io->context,root[n]+4);
+  if((saved[n]&0x71f)!=1 || (io->read(io->context,root[n])&0x80000001u))
+   return ONYX_CLOCK_ARGUMENT;
+ }
+ unsigned touched=0;
+ enum onyx_clock_result result=ONYX_CLOCK_READBACK;
+ for(unsigned n=0;n<2;n++) {
+  touched=n+1;
+  io->write(io->context,root[n]+4,(saved[n]&~0x71fu)|target[n]);
+  if((io->read(io->context,root[n]+4)&0x71f)!=target[n]) goto rollback;
+  io->write(io->context,root[n],io->read(io->context,root[n])|3u);
+  if(!clock_wait(io,root[n],0x80000001u,0)) { result=ONYX_CLOCK_TIMEOUT;goto rollback; }
+ }
+ return ONYX_CLOCK_OK;
+rollback:
+ while(touched) {
+  unsigned n=--touched;
+  io->write(io->context,root[n]+4,saved[n]);
+  io->write(io->context,root[n],io->read(io->context,root[n])|3u);
+  (void)clock_wait(io,root[n],0x80000001u,0);
+ }
+ io->quarantined=1;
+ return result;
+}
