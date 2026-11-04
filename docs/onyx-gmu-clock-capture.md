@@ -118,3 +118,24 @@ A pre-access message gets a 35-second persistence window, then power and
 clock status is rechecked. Counter advancement is evidence of accessible
 AO state, not of a running CM3, firmware, GPU job, or Metal implementation.
 This new stage is not yet hardware tested.
+
+## Verified GMUCX counter access
+
+Run gmu-counter-41891315686 passed exact run identity and both CRC checks:
+snapshot 22, 1032974 bytes, flags 1. Power/clock setup again returned success
+without quarantine. At 84.142 seconds, the GMUCX AO sample returned 0:
+0x604910b0 -> 0x60496700, delta 22096 across the requested 1 ms delay
+(which includes scheduling/MMIO overhead). Logs and framebuffer updates
+continued beyond 553 seconds. This establishes readable, advancing GMUCX AO
+state on the tested device; it does not establish CM3 firmware execution.
+Evidence: out/logs/gmu-counter-41891315686/{journal.bin,kernel.log,result.json}.
+The Android boot partition was again hash-verified after recovery restore.
+
+The current parser also accepts the phone's saved gen80600_gmu.bin: 15
+blocks. Its executable code includes a CACHE payload at GMU VA 0x4000 of
+0x15868 bytes, plus fixed ITCM and DTCM payloads. Metadata reserves further
+CACHE regions at 0x100000, 0x200000 and 0x300000, and uncached pages at
+0x60000000/0x60001000. Consequently firmware startup requires real GMU IOMMU
+backing, not only TCM copies. That backing, HFI shared-memory mapping and
+stock secure CX initialization remain prerequisites before releasing CM3.
+No firmware upload, CM3 reset release or GPU job was attempted in this run.
