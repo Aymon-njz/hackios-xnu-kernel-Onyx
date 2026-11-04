@@ -154,3 +154,32 @@ onyx_gen8_cx_enable(struct onyx_rsc_io *io, unsigned supplies_ready, uint32_t *s
 	io->quarantined = 1;
 	return ONYX_CX_TIMEOUT;
 }
+
+/* gen8_reg.h + gen8_read_alwayson: word indices 0x1f840/0x1f841
+ * relative to GPU base 0x03d00000. Retry high/low/high on rollover. */
+static int onyx_counter_read(struct onyx_rsc_io *io, uint64_t *value)
+{
+    for (unsigned n = 0; n < 8; n++) {
+        uint32_t high = io->read(io->context, 0x104);
+        uint32_t low = io->read(io->context, 0x100);
+        uint32_t again = io->read(io->context, 0x104);
+        if (high == again) {
+            *value = ((uint64_t)high << 32) | low;
+            return 1;
+        }
+    }
+    return 0;
+}
+enum onyx_counter_result onyx_gen8_counter_sample(struct onyx_rsc_io *io,
+    uint64_t *before, uint64_t *after)
+{
+    if (!io || !io->read || !io->delay_us || !io->owned || io->quarantined ||
+        !before || !after) return ONYX_COUNTER_ARGUMENT;
+    *before = *after = 0;
+    if (!onyx_counter_read(io, before)) return ONYX_COUNTER_UNSTABLE;
+    io->delay_us(io->context, 1000);
+    if (!onyx_counter_read(io, after)) return ONYX_COUNTER_UNSTABLE;
+    if (*after == *before) return ONYX_COUNTER_STALLED;
+    if (*after < *before) return ONYX_COUNTER_BACKWARDS;
+    return ONYX_COUNTER_OK;
+}

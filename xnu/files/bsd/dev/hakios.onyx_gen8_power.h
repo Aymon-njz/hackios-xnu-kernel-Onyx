@@ -32,6 +32,17 @@ struct onyx_clock_trace {
 enum onyx_clock_result onyx_gen8_clocks_tcxo(struct onyx_rsc_io *gpucc,
     struct onyx_clock_trace *trace);
 
+/* Read-only GMUCX AO counter test, after the caller establishes CX/clocks.
+ * Offsets are bytes relative to the CM3 control page at physical 0x03d7e000.
+ * Advancement proves an observable AO counter, not CM3 firmware execution.
+ */
+enum onyx_counter_result {
+    ONYX_COUNTER_OK, ONYX_COUNTER_ARGUMENT, ONYX_COUNTER_UNSTABLE,
+    ONYX_COUNTER_STALLED, ONYX_COUNTER_BACKWARDS
+};
+enum onyx_counter_result onyx_gen8_counter_sample(struct onyx_rsc_io *io,
+    uint64_t *before, uint64_t *after);
+
 enum onyx_gen8_power_missing {
 	ONYX_CX_OFF = 1u << 0,
 	ONYX_CX_COLLAPSED = 1u << 1,

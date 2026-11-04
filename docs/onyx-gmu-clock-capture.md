@@ -90,3 +90,31 @@ access, and no GMU firmware start is enabled by this patch. The always-on HUB
 logical request from the earlier stock comparison may remain physically set
 until reboot because its stock ops omit disable. No raw MMIO writes were made
 in recovery; debugfs was unmounted after the comparison.
+
+## Verified AHB-fix hardware capture
+
+Run gmu-ahb-41495189072 validated both journal CRCs, exact identity and length:
+snapshot 11, 724611 bytes, flags 1 (no wrap or capacity truncation reported).
+Both RPMh votes returned 0; CX changed from 0x22f801 to 0xf822f800.
+The clock helper returned 0 with quarantine 0. GMU and HUB commands read 2,
+configs 0x100001; CX GMU branch read 0x2001, CXO and HUB CX INT read 1.
+Non-echo masks were branches 0xa and always-on 0x2, matching the measured
+stock treatment of HUB AON, AHB and CXO AON. The log continued with framebuffer
+updates past 221 seconds. No GMU firmware was started and no GPU work ran.
+Raw evidence stays local at out/logs/gmu-ahb-41495189072/.
+
+The restored Android boot partition was SHA256-verified against the saved
+backup after a successful sparse restore in 8 MiB transfers. Large 96 MiB
+raw transfers had disconnected; the sparse image expands byte-for-byte to
+the backup, including its AVB footer.
+
+Stage 7 (onyx_gpu_stage=7 onyx_gpu_power=1 onyx_gmu_access=1) adds a read-only
+GMUCX AO-counter sample after successful clock setup. Recovery FDT maps GMU
+at 0x03d37000/0x68000. Pinned stock graphics source
+8500748dae32f10507c02f1c94bc971553cb525b/gen8_reg.h and gen8_read_alwayson
+use GPU-relative word indices 0x1f840/0x1f841: physical 0x03d7e100/104.
+High/low/high reads retry at most eight times; samples are 1 ms apart.
+A pre-access message gets a 35-second persistence window, then power and
+clock status is rechecked. Counter advancement is evidence of accessible
+AO state, not of a running CM3, firmware, GPU job, or Metal implementation.
+This new stage is not yet hardware tested.

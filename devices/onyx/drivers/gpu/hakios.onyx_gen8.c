@@ -1,5 +1,5 @@
 /* Onyx Gen8 kernel integration. Stages 1..4 validate/discover without writes.
- * Stage 5 is an explicitly enabled experimental CX power-on test.
+ * Stages 5/6 test CX power and clocks; stage 7 optionally reads the GMUCX AO counter.
  * No stage currently starts the GMU, 3D engine or GPU SMMU.
  * The existing no-GPU stubs stay in force until a real backend is implemented. */
 #include <sys/systm.h>
@@ -113,6 +113,31 @@ static void onyx_gen8_power_test(unsigned stage)
 		static const uint32_t offsets[] = { 0x9318, 0x931c, 0x93ec, 0x93f0, 0x90d4, 0x90e4, 0x90e8, 0x90bc, 0x93a4, 0x9008, 0x93a8, 0x9004, 0x90cc, 0x9000 };
 		for (unsigned n = 0; n < sizeof(offsets) / sizeof(offsets[0]); n++)
 			printf("onyx-gen8: clock offset %#x readback %#x\n", offsets[n], gio.read(gio.context, offsets[n]));
+        int access = 0;
+        if (stage == 7 && clock_result == ONYX_CLOCK_OK && !gio.quarantined &&
+            PE_parse_boot_argn("onyx_gmu_access", &access, sizeof(access)) && access == 1) {
+            /* Recovery FDT: GMU 0x03d37000/0x68000. Stock GPU-relative
+             * word 0x1f840 maps to 0x03d7e100. No reset/firmware writes. */
+            printf("onyx-gen8: next GMUCX AO counter read at 0x03d7e100; saving pre-access log first\n");
+            delay_for_interval(35, NSEC_PER_SEC);
+            uint32_t missing = onyx_gen8_power_missing(gio.read(gio.context, 0x9080),
+                gio.read(gio.context, 0x90d4), gio.read(gio.context, 0x90e4),
+                gio.read(gio.context, 0x90e8), gio.read(gio.context, 0x9318));
+            if (missing) {
+                printf("onyx-gen8: GMUCX read skipped: power/clock state changed (%#x)\n", missing);
+                return;
+            }
+            vm_offset_t control = ml_io_map(0x03d7e000, 0x1000);
+            if (control) {
+                struct onyx_rsc_io counter_io = { (void *)control,
+                    onyx_gpu_mmio_read, NULL, onyx_gpu_mmio_wait, 1, 0 };
+                uint64_t before = 0, after = 0;
+                enum onyx_counter_result sample = onyx_gen8_counter_sample(&counter_io, &before, &after);
+                printf("onyx-gen8: GMUCX counter result %u before %#llx after %#llx delta %llu; no CM3 firmware execution claimed\n",
+                    (unsigned)sample, before, after, after >= before ? after - before : 0);
+            } else printf("onyx-gen8: GMUCX control page mapping failed\n");
+        }
+
 	}
 	printf("onyx-gen8: power test stopped; no GMU firmware boot, GPU work or Metal acceleration\n");
 }
@@ -232,7 +257,7 @@ onyx_gen8_validate(void *parameter, __unused wait_result_t result)
 	size_t count = 0;
 	uint32_t command[] = { 0x20e, 0 }; /* CORE_FW_START wire shape, not sent to hardware */
 	delay_for_interval(30, NSEC_PER_SEC);
-	if ((uintptr_t)parameter == 5 || (uintptr_t)parameter == 6) {
+	if ((uintptr_t)parameter >= 5 && (uintptr_t)parameter <= 7) {
 		onyx_gen8_power_test((unsigned)(uintptr_t)parameter);
 		return;
 	}
@@ -283,7 +308,7 @@ onyx_gen8_init(void)
 {
 	int stage = 0;
 	thread_t thread;
-	if (!PE_parse_boot_argn("onyx_gpu_stage", &stage, sizeof(stage)) || stage < 1 || stage > 6) return;
+	if (!PE_parse_boot_argn("onyx_gpu_stage", &stage, sizeof(stage)) || stage < 1 || stage > 7) return;
 	if (kernel_thread_start(onyx_gen8_validate, (void *)(uintptr_t)stage, &thread) == KERN_SUCCESS)
 		thread_deallocate(thread);
 }
