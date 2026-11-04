@@ -73,14 +73,24 @@ static void onyx_gmu_smmu_inventory(struct onyx_rsc_io *gpucc)
     unsigned hits = 0;
     for (unsigned n=0; n<matches; n++) {
         uint32_t smr = onyx_gpu_mmio_read((void *)base, 0x800+4*n);
-        if (!(smr & 0x80000000u)) continue;
         uint32_t s2cr = onyx_gpu_mmio_read((void *)base, 0xc00+4*n);
+        printf("onyx-gen8: SMMU slot %u SMR %#x S2CR %#x valid %u\n",
+            n, smr, s2cr, !!(smr & 0x80000000u));
+        if (!(smr & 0x80000000u)) continue;
         uint32_t mask = (smr >> 16) & 0x7fff;
         if (((5u ^ smr) & ~mask & 0x7fff) == 0) {
             hits++;
             printf("onyx-gen8: GMU SID5 match %u SMR %#x S2CR %#x bank %u type %u\n",
                 n, smr, s2cr, s2cr & 255, (s2cr >> 16) & 3);
         }
+    }
+    /* GR1 metadata only. Do not touch any bank's TTBR/SCTLR or assume
+     * that an invalid stream slot proves its context is available. */
+    for (unsigned n=0; n<banks; n++) {
+        uint32_t cbar = onyx_gpu_mmio_read((void *)base, page + 4*n);
+        uint32_t cba2r = onyx_gpu_mmio_read((void *)base, page + 0x800 + 4*n);
+        printf("onyx-gen8: SMMU bank metadata %u CBAR %#x CBA2R %#x; ownership unproven\n",
+            n, cbar, cba2r);
     }
     printf("onyx-gen8: SMMU inventory complete; SID5 matches %u; no bank claimed or attached\n", hits);
 }

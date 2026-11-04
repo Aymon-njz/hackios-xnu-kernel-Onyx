@@ -209,3 +209,17 @@ Stage 8 preserves its pre-vote log, then checks this result before inventory.
 Host tests cover the enable path, timeout and rollback. Hardware validation
 is still required. Stream routing, context attachment and GPU firmware boot
 are not inferred from these software tests.
+
+## Verified GPU SMMU clock and global access
+
+Run gmu-smmu-clock-41906562290 validated identity and both CRCs: snapshot 10,
+648155 bytes, no wrap/capacity flags. At 119 seconds the HLOS1 vote returned
+success with GPUCC 0x7000=1. At 154 seconds global reads returned IDR0
+0x4c017e18, IDR1 0x40000016, IDR2 0x5511: 22 banks, 24 match slots and a
+4 KiB register page. No active SMR matched GMU stream 5. iOS/framebuffer logs
+continued past 191 seconds. No domain was attached or firmware started.
+
+The next inventory records all 24 raw SMR/S2CR slots, including invalid
+slots, and GR1 CBAR/CBA2R metadata for all 22 banks. It does not read or
+write bank-local TTBR/SCTLR registers. Missing SID5 routing alone does not
+prove that an arbitrarily selected slot or context belongs to this port.
