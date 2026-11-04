@@ -35,13 +35,13 @@ int onyx_gmu_memory_prepare(struct onyx_gmu_memory *m,struct onyx_gmu_mmu *pt,
   const struct onyx_gen8_fw_block *b=&blocks[i];
   if(b->payload || (b->type!=1 && b->type!=7) ||
      b->region==ONYX_GEN8_ITCM || b->region==ONYX_GEN8_DTCM) continue;
-  unsigned flags=ONYX_GMU_READ|ONYX_GMU_WRITE;
-  if(b->region==ONYX_GEN8_CACHE) flags=ONYX_GMU_READ|ONYX_GMU_EXEC|ONYX_GMU_WB;
+  unsigned flags=ONYX_GMU_READ|ONYX_GMU_WRITE|ONYX_GMU_PRIV;
+  if(b->region==ONYX_GEN8_CACHE) flags=ONYX_GMU_READ|ONYX_GMU_WRITE|ONYX_GMU_EXEC|ONYX_GMU_PRIV;
   if(!add(m,b->address,b->value,flags)) goto fail;
  }
  /* Firmware metadata reserves 0x60000000/1000. HFI follows those pages. */
  if(!add(m,0x60002000,(ONYX_HFI_SHARED_BYTES+4095)&~4095u,
-     ONYX_GMU_READ|ONYX_GMU_WRITE)) goto fail;
+     ONYX_GMU_READ|ONYX_GMU_WRITE|ONYX_GMU_PRIV)) goto fail;
  for(size_t i=0;i<m->count;i++) {
   struct onyx_gmu_backing *r=&m->region[i];
   result=ONYX_GMU_MEMORY_ALLOCATE;

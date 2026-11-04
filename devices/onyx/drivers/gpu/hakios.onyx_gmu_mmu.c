@@ -21,7 +21,7 @@ int onyx_gmu_mmu_map(struct onyx_gmu_mmu *m, uint64_t va, uint64_t pa, size_t by
     if (!m || !m->tables || !m->used || m->used>m->pages || !bytes ||
         ((va|pa|bytes)&4095) || va>=(1ULL<<32) || bytes>(1ULL<<32)-va ||
         pa>=(1ULL<<40) || bytes>(1ULL<<40)-pa || !(flags&ONYX_GMU_READ) ||
-        (flags&~15u) || ((flags&ONYX_GMU_WRITE)&&(flags&ONYX_GMU_EXEC)))
+        (flags&~31u))
         return ONYX_GMU_MAP_ARGUMENT;
     /* Preflight the entire mapping. On error no descriptor or allocation changes. */
     size_t needed=0; uint64_t last1=UINT64_MAX,last2=UINT64_MAX;
@@ -35,7 +35,8 @@ int onyx_gmu_mmu_map(struct onyx_gmu_mmu *m, uint64_t va, uint64_t pa, size_t by
         if (l3 && l3[c]) return ONYX_GMU_MAP_CONFLICT;
     }
     if (needed>m->pages-m->used) return ONYX_GMU_MAP_CAPACITY;
-    uint64_t attrs=3ULL|(1ULL<<10)|(3ULL<<8)|(1ULL<<6);
+    uint64_t attrs=3ULL|(1ULL<<10)|(3ULL<<8)|(1ULL<<11);
+    if (!(flags&ONYX_GMU_PRIV)) attrs|=1ULL<<6;
     if (!(flags&ONYX_GMU_WRITE)) attrs|=1ULL<<7;
     if (!(flags&ONYX_GMU_EXEC)) attrs|=(1ULL<<54)|(1ULL<<53);
     if (flags&ONYX_GMU_WB) attrs|=1ULL<<2;

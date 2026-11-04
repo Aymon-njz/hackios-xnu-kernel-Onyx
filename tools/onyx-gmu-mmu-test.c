@@ -19,7 +19,7 @@ int main(void)
  assert(m.used==used && !memcmp(saved,pages,sizeof pages));
  assert(onyx_gmu_mmu_map(&m,0xfffff000,0x93000000,0x2000,ONYX_GMU_READ)==ONYX_GMU_MAP_ARGUMENT);
  assert(onyx_gmu_mmu_map(&m,0x2000,(1ULL<<40)-4096,8192,ONYX_GMU_READ)==ONYX_GMU_MAP_ARGUMENT);
- assert(onyx_gmu_mmu_map(&m,0x2000,0x93000000,4096,7)==ONYX_GMU_MAP_ARGUMENT);
+ assert(onyx_gmu_mmu_map(&m,0x2000,0x93000000,4096,0x80)==ONYX_GMU_MAP_ARGUMENT);
  assert(onyx_gmu_mmu_lookup(&m,0x2000,&pa,&d)!=0);
  /* Cross L2 and L1 boundaries; independent page-table branches. */
  assert(onyx_gmu_mmu_map(&m,0xbffff000,0x94000000,0x2000,ONYX_GMU_READ)==0);

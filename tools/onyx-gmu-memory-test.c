@@ -27,6 +27,8 @@ int main(int argc,char **argv)
  assert(a.alive==m.count && a.publishes==m.count+1 && m.count>1);
  for(size_t i=0;i<m.count;i++) { uint64_t pa,d;
   assert(!onyx_gmu_mmu_lookup(&pt,m.region[i].va,&pa,&d) && pa==m.region[i].pa);
+  assert(!(d&(1ULL<<6))); /* IOMMU_PRIV: no unprivileged access */
+  assert(!(d&4)); /* Stock default has no IOMMU_CACHE attribute. */
  }
  struct onyx_gen8_fw_block blocks[64];size_t count;
  assert(!onyx_gen8_fw_plan(image,n,blocks,64,&count));

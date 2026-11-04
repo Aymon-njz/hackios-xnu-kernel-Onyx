@@ -362,6 +362,11 @@ onyx_gen8_validate(void *parameter, __unused wait_result_t result)
 	enum onyx_gen8_fw_status status = onyx_gen8_fw_plan(image, (size_t)bytes, blocks, 64, &count);
 	printf("onyx-gen8: GMU firmware validation status %u blocks %lu; hardware startup unavailable\n",
 	    (unsigned)status, (unsigned long)count);
+    int prepare=0;
+    extern int onyx_gmu_native_prepare(const void *, size_t);
+    if(status==ONYX_GEN8_FW_OK && PE_parse_boot_argn("onyx_gmu_prepare", &prepare, sizeof(prepare)) && prepare==1)
+        (void)onyx_gmu_native_prepare(image,(size_t)bytes);
+
 }
 
 static void

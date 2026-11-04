@@ -223,3 +223,23 @@ The next inventory records all 24 raw SMR/S2CR slots, including invalid
 slots, and GR1 CBAR/CBA2R metadata for all 22 banks. It does not read or
 write bank-local TTBR/SCTLR registers. Missing SID5 routing alone does not
 prove that an arbitrarily selected slot or context belongs to this port.
+
+## Native physical-allocation wiring
+
+onyx_gmu_native_prepare now uses XNU kmem_alloc_contig, verifies physical
+contiguity page by page, retains the table arena and firmware/HFI buffers,
+cleans data/tables with FlushPoC_DcacheRegion plus a system barrier, and
+checks software translations against every backing page's physical address.
+It is opt-in via onyx_gmu_prepare=1 after the existing preloaded-firmware
+validator. It requires firmware to be present in the boot ramdisk's fw directory.
+It never installs TTBR or releases CM3. Missing firmware stops preparation.
+
+Stock gen8_reserve_gmu_kernel_block uses IOMMU_READ|WRITE|PRIV without
+IOMMU_CACHE. Preparation mappings now match privileged normal-noncacheable
+backing; firmware CACHE VA reservations permit execution and writes, while
+HFI remains data-only/NX. This supersedes the earlier provisional RX/WB
+policy and blanket writable-executable rejection. Private generic mappings
+can still request WB or unprivileged access explicitly. Physical allocation
+and cache maintenance are kernel APIs, but their hardware behavior has not
+yet been exercised by this new code. Live attachment and firmware start
+remain blocked on route/context validation, not simulated as completed.
