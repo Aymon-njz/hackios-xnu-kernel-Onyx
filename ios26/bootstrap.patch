@@ -5670,6 +5670,19 @@ index 7784e72..6e15fc7 100644
  	if (disableConsoleOutput) {
  		return;
  	}
+diff --git a/osfmk/kern/exclaves.c b/osfmk/kern/exclaves.c
+index 6247d29..c5ee34d 100644
+--- a/osfmk/kern/exclaves.c
++++ b/osfmk/kern/exclaves.c
+@@ -3328,7 +3328,7 @@ STARTUP(TUNABLES, STARTUP_RANK_MIDDLE, exclaves_requirement_startup);
+ 
+ #endif /* CONFIG_EXCLAVES */
+ 
+-#if __has_include(<Tightbeam/tightbeam.h>)
++#if !defined(ARM64_BOARD_CONFIG_BCM2837) && __has_include(<Tightbeam/tightbeam.h>)
+ 
+ #include <Tightbeam/tightbeam.h>
+ 
 diff --git a/pexpert/arm/pe_fiq.c b/pexpert/arm/pe_fiq.c
 index 3ad743f..7a18fb2 100644
 --- a/pexpert/arm/pe_fiq.c
