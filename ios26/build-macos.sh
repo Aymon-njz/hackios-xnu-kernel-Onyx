@@ -57,4 +57,4 @@ if [ -f "$deps/usr/local/lib/kernel/liblibfirehose_kernel.a" ]; then
   cp "$deps/usr/local/lib/kernel/liblibfirehose_kernel.a" "$deps/usr/local/lib/kernel/libfirehose_kernel.a"
 fi
 test -s "$deps/usr/local/lib/kernel/libfirehose_kernel.a"
-make -C kernel26 "${kernel_args[@]}" -j3 build
+make -C kernel26 "${kernel_args[@]}" -j3 config
