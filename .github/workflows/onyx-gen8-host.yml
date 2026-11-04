@@ -17,6 +17,15 @@ jobs:
             -Ixnu/files/bsd/dev devices/onyx/drivers/gpu/hakios.onyx_gen8_power.c \
             tools/onyx-gmu-clock-test.c -o /tmp/onyx-gmu-clock-test
           /tmp/onyx-gmu-clock-test
+      - name: Validate GMU firmware backing and failure cleanup
+        run: |
+          clang -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \
+            -Ixnu/files/bsd/dev devices/onyx/drivers/gpu/hakios.onyx_gmu_memory.c \
+            devices/onyx/drivers/gpu/hakios.onyx_gmu_mmu.c \
+            devices/onyx/drivers/gpu/hakios.onyx_gen8_firmware.c \
+            devices/onyx/drivers/gpu/hakios.onyx_gen8_hfi.c \
+            tools/onyx-gmu-memory-test.c -o /tmp/onyx-gmu-memory-test
+          /tmp/onyx-gmu-memory-test
       - name: Validate unattached GMU page tables
         run: |
           clang -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \

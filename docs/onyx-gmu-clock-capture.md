@@ -174,3 +174,23 @@ GMU SID 5. It never reads context-bank pages or writes SMR, S2CR, TTBR or
 SCTLR. Unknown geometry or an off clock stops the test. The pre-access log
 gets a persistence window. This is not attachment: live route/context
 ownership still must be established before installing the private tables.
+
+## Firmware/shared-memory preparation component
+
+onyx_gmu_memory_prepare now accepts an allocator/cache-publication interface
+and a fresh private page-table arena. It parses the full firmware first,
+allocates page-rounded backing for external reservations, rejects overlapping
+physical allocations (including the translation-table arena), copies external
+payloads, prepares the HFI queues at 0x60002000, and publishes buffers/tables
+through the caller's DMA-maintenance callback. TCM remains a separate upload
+step; no CM3 reset or MMIO writes are performed. Every failure releases
+allocations and discards the private root table. It must not be called on an
+attached/live domain; teardown requires the hardware to be quiesced first.
+
+Host tests pass with a synthetic stream and the saved gen80600_gmu.bin,
+including translation checks, exact firmware copies and failure injection
+at every allocation. These callbacks are not yet wired to XNU's physical
+allocator or a live SMMU bank. Cached firmware mappings currently use RX/WB
+policy; full firmware data permissions require stock-attribute review before
+firmware execution. HFI uses RW/NX/noncacheable memory. No successful firmware
+boot, HFI exchange, GPU command/fence or Gen8 Metal shader execution is claimed.
