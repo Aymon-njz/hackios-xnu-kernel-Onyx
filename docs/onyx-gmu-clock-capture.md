@@ -159,3 +159,18 @@ queue; verify the GMU stream 5 routing and a private context bank from live
 SMMU state; establish TCR/MAIR attributes from the hardware capabilities;
 flush data/tables; then install and invalidate with bounded status checks.
 Do not reuse the existing A6xx stream/context assignments for Onyx.
+
+## Live attachment prerequisite
+
+Recovery currently exposes the GPU SMMU but no attached GMU domain or IOMMU
+group. Its GMU device has no bound driver. This does not prove that a context
+bank is free of firmware or hypervisor ownership. No recovery SMMU registers
+were changed; debugfs was unmounted after inspecting its available interfaces.
+
+Stage 8 adds read-only global SMMU inventory after successful GMUCX counter
+access, gated by the GPUCC HLOS1 SMMU clock-off bit. It validates stream-match
+support and register-window geometry, then reports every SMR/S2CR matching
+GMU SID 5. It never reads context-bank pages or writes SMR, S2CR, TTBR or
+SCTLR. Unknown geometry or an off clock stops the test. The pre-access log
+gets a persistence window. This is not attachment: live route/context
+ownership still must be established before installing the private tables.

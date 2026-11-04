@@ -35,6 +35,47 @@ static void onyx_gpu_mmio_wait(__unused void *context, unsigned microseconds)
 	delay_for_interval(microseconds, NSEC_PER_USEC);
 }
 
+/* Inventory only: no stream, context, TTBR or translation-control writes. */
+static void onyx_gmu_smmu_inventory(struct onyx_rsc_io *gpucc)
+{
+    uint32_t clock = gpucc->read(gpucc->context, 0x7000);
+    if (clock & 0x80000000u) {
+        printf("onyx-gen8: SMMU inventory deferred: HLOS1 SMMU clock is off (%#x)\n", clock);
+        return;
+    }
+    printf("onyx-gen8: next GPU SMMU global inventory; no context attachment; saving log\n");
+    delay_for_interval(35, NSEC_PER_SEC);
+    if (gpucc->read(gpucc->context, 0x7000) & 0x80000000u) return;
+    vm_offset_t base = ml_io_map(0x03da0000, 0x40000);
+    if (!base) return;
+    uint32_t id0 = onyx_gpu_mmio_read((void *)base, 0x20);
+    uint32_t id1 = onyx_gpu_mmio_read((void *)base, 0x24);
+    uint32_t id2 = onyx_gpu_mmio_read((void *)base, 0x28);
+    uint32_t page = (id1 >> 31) ? 0x10000 : 0x1000;
+    uint32_t global_pages = 2u << ((id1 >> 28) & 7);
+    unsigned banks = id1 & 255, matches = id0 & 255;
+    printf("onyx-gen8: SMMU IDR0 %#x IDR1 %#x IDR2 %#x banks %u matches %u\n",
+        id0, id1, id2, banks, matches);
+    if (!(id0 & (1u << 27)) || !banks || banks > 128 || !matches || matches > 128 ||
+        2ULL * global_pages * page != 0x40000) {
+        printf("onyx-gen8: SMMU geometry not accepted; stopped before stream reads\n");
+        return;
+    }
+    unsigned hits = 0;
+    for (unsigned n=0; n<matches; n++) {
+        uint32_t smr = onyx_gpu_mmio_read((void *)base, 0x800+4*n);
+        if (!(smr & 0x80000000u)) continue;
+        uint32_t s2cr = onyx_gpu_mmio_read((void *)base, 0xc00+4*n);
+        uint32_t mask = (smr >> 16) & 0x7fff;
+        if (((5u ^ smr) & ~mask & 0x7fff) == 0) {
+            hits++;
+            printf("onyx-gen8: GMU SID5 match %u SMR %#x S2CR %#x bank %u type %u\n",
+                n, smr, s2cr, s2cr & 255, (s2cr >> 16) & 3);
+        }
+    }
+    printf("onyx-gen8: SMMU inventory complete; SID5 matches %u; no bank claimed or attached\n", hits);
+}
+
 static void onyx_gen8_power_test(unsigned stage)
 {
 	int enabled = 0, cpus = 0, native = 0;
@@ -114,7 +155,7 @@ static void onyx_gen8_power_test(unsigned stage)
 		for (unsigned n = 0; n < sizeof(offsets) / sizeof(offsets[0]); n++)
 			printf("onyx-gen8: clock offset %#x readback %#x\n", offsets[n], gio.read(gio.context, offsets[n]));
         int access = 0;
-        if (stage == 7 && clock_result == ONYX_CLOCK_OK && !gio.quarantined &&
+        if (stage >= 7 && clock_result == ONYX_CLOCK_OK && !gio.quarantined &&
             PE_parse_boot_argn("onyx_gmu_access", &access, sizeof(access)) && access == 1) {
             /* Recovery FDT: GMU 0x03d37000/0x68000. Stock GPU-relative
              * word 0x1f840 maps to 0x03d7e100. No reset/firmware writes. */
@@ -135,6 +176,7 @@ static void onyx_gen8_power_test(unsigned stage)
                 enum onyx_counter_result sample = onyx_gen8_counter_sample(&counter_io, &before, &after);
                 printf("onyx-gen8: GMUCX counter result %u before %#llx after %#llx delta %llu; no CM3 firmware execution claimed\n",
                     (unsigned)sample, before, after, after >= before ? after - before : 0);
+                if (stage == 8 && sample == ONYX_COUNTER_OK) onyx_gmu_smmu_inventory(&gio);
             } else printf("onyx-gen8: GMUCX control page mapping failed\n");
         }
 
@@ -257,7 +299,7 @@ onyx_gen8_validate(void *parameter, __unused wait_result_t result)
 	size_t count = 0;
 	uint32_t command[] = { 0x20e, 0 }; /* CORE_FW_START wire shape, not sent to hardware */
 	delay_for_interval(30, NSEC_PER_SEC);
-	if ((uintptr_t)parameter >= 5 && (uintptr_t)parameter <= 7) {
+	if ((uintptr_t)parameter >= 5 && (uintptr_t)parameter <= 8) {
 		onyx_gen8_power_test((unsigned)(uintptr_t)parameter);
 		return;
 	}
@@ -308,7 +350,7 @@ onyx_gen8_init(void)
 {
 	int stage = 0;
 	thread_t thread;
-	if (!PE_parse_boot_argn("onyx_gpu_stage", &stage, sizeof(stage)) || stage < 1 || stage > 7) return;
+	if (!PE_parse_boot_argn("onyx_gpu_stage", &stage, sizeof(stage)) || stage < 1 || stage > 8) return;
 	if (kernel_thread_start(onyx_gen8_validate, (void *)(uintptr_t)stage, &thread) == KERN_SUCCESS)
 		thread_deallocate(thread);
 }
