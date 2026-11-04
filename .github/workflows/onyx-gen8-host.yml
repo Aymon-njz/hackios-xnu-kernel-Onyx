@@ -17,6 +17,12 @@ jobs:
             -Ixnu/files/bsd/dev devices/onyx/drivers/gpu/hakios.onyx_gen8_power.c \
             tools/onyx-gmu-clock-test.c -o /tmp/onyx-gmu-clock-test
           /tmp/onyx-gmu-clock-test
+      - name: Validate unattached GMU page tables
+        run: |
+          clang -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \
+            -Ixnu/files/bsd/dev devices/onyx/drivers/gpu/hakios.onyx_gmu_mmu.c \
+            tools/onyx-gmu-mmu-test.c -o /tmp/onyx-gmu-mmu-test
+          /tmp/onyx-gmu-mmu-test
       - name: Validate read-only GMUCX counter access
         run: |
           clang -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \

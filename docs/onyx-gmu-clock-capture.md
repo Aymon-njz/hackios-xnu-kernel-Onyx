@@ -139,3 +139,23 @@ CACHE regions at 0x100000, 0x200000 and 0x300000, and uncached pages at
 backing, not only TCM copies. That backing, HFI shared-memory mapping and
 stock secure CX initialization remain prerequisites before releasing CM3.
 No firmware upload, CM3 reset release or GPU job was attempted in this run.
+
+## Private GMU translation tables
+
+The new onyx_gmu_mmu builder creates unattached AArch64 stage-1 LPAE tables:
+32-bit IOVAs, conservative 40-bit PAs, 4 KiB L1/L2/L3 translations. Firmware
+CACHE pages can be read/execute and normal-WB; HFI data can be read/write,
+non-executable and normal-noncacheable. MAIR slots must match 0x44/0xff.
+Writable executable mappings are refused. Mapping preflights every page and
+table capacity before changing descriptors, so overlaps, exhausted arenas,
+and corrupt child descriptors leave the requested range unpublished.
+Tests cover actual firmware/HFI address ranges, both table boundaries,
+read-only/XN/cache attributes, overflow and atomic failure behavior.
+
+This is CPU-built table infrastructure, not a live SMMU domain. No TTBR,
+SCTLR, stream match, context bank or TLB registers are written. Before attach:
+allocate and retain physical backing for every firmware reservation and HFI
+queue; verify the GMU stream 5 routing and a private context bank from live
+SMMU state; establish TCR/MAIR attributes from the hardware capabilities;
+flush data/tables; then install and invalidate with bounded status checks.
+Do not reuse the existing A6xx stream/context assignments for Onyx.
