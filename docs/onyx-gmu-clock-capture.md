@@ -391,3 +391,19 @@ metadata parser, shared-route vote aggregation or boot-stage bandwidth setup.
 Tuna's GPU route includes SH1 (enable mask), SH0 and MC0 (bandwidth resources).
 Their actual units/widths/addresses and current aggregate vote floors must be
 resolved before enabling the native path. GPU execution remains unimplemented.
+
+### BCM metadata and arithmetic
+
+The saved recovery command-DB dump at out/logs/pre-rpmh-test/cmd-db.txt
+contains MC0 address0x50000/unit4800000/width16/VCD0, SH0 address0x50004/
+unit4800000/width64/VCD1 and SH1 address0x50008 with the same unit/width/VCD.
+Added a bounded BCM metadata parser and stock-style node aggregation (average
+sum and peak maximum must first be aggregated by the caller across users).
+Includes enable-mask resources, keepalive, division of small nonzero requests,
+14-bit saturation and overflow refusal. This implements calculations only:
+shared vote floors and the live startup caller are not yet established.
+
+The f17238c full kernel and Linux sanitizer jobs passed. New parser/arithmetic
+host tests pass UBSan, including truncation checks and output preservation.
+No new image was flashed. No successful GMU firmware boot, GPU job, or Metal
+frame has been demonstrated; a full graphics test image is still unavailable.

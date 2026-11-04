@@ -8,6 +8,8 @@ on:
       - 'xnu/files/bsd/dev/hakios.onyx_gmu*.h'
       - 'tools/onyx-gmu-*-test.c'
       - 'tools/onyx-qtb-test.c'
+      - 'tools/onyx-bcm-test.c'
+      - 'xnu/files/bsd/dev/hakios.onyx_bcm.h'
       - 'xnu/files/bsd/dev/hakios.onyx_qtb.h'
       - '.github/workflows/onyx-gen8-host.yml'
 jobs:
@@ -15,6 +17,12 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - name: Validate BCM metadata and bandwidth calculation
+        run: |
+          clang -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \
+            -Ixnu/files/bsd/dev devices/onyx/drivers/gpu/hakios.onyx_bcm.c \
+            tools/onyx-bcm-test.c -o /tmp/onyx-bcm-test
+          /tmp/onyx-bcm-test
       - name: Validate cold PLL calibration
         run: |
           clang -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \

@@ -4,6 +4,7 @@ driver ONYX_GEN8_CORE
 	file bsd/dev/hakios.onyx_gen8_firmware.c
 	file bsd/dev/hakios.onyx_gen8_hfi.c
 	file bsd/dev/hakios.onyx_rpmh.c
+	file bsd/dev/hakios.onyx_bcm.c
 	file bsd/dev/hakios.onyx_gen8_power.c
 	file bsd/dev/hakios.onyx_gmu_mmu.c
 	file bsd/dev/hakios.onyx_gmu_memory.c
