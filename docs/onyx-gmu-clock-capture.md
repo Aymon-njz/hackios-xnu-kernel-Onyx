@@ -194,3 +194,18 @@ allocator or a live SMMU bank. Cached firmware mappings currently use RX/WB
 policy; full firmware data permissions require stock-attribute review before
 firmware execution. HFI uses RW/NX/noncacheable memory. No successful firmware
 boot, HFI exchange, GPU command/fence or Gen8 Metal shader execution is claimed.
+
+## SMMU inventory test result and clock prerequisite
+
+Run gmu-smmu-41897639553 passed identity and CRC checks: snapshot 13,
+771549 bytes, no wrap/truncation flags. GMUCX AO again advanced. The SMMU
+inventory was deliberately skipped because GPUCC 0x7000 read 0x80000000
+(HLOS1 SMMU clock off); no SMMU register access or context attachment occurred.
+
+The new opt-in onyx_smmu_clock=1 follows stock Tuna's voted branch at GPUCC
+0x7000: request bit0, bounded clock-off/FSM polling, restore the prior vote
+on timeout and quarantine further access. It requires established CX power.
+Stage 8 preserves its pre-vote log, then checks this result before inventory.
+Host tests cover the enable path, timeout and rollback. Hardware validation
+is still required. Stream routing, context attachment and GPU firmware boot
+are not inferred from these software tests.

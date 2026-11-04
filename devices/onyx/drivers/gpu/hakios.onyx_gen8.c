@@ -38,6 +38,15 @@ static void onyx_gpu_mmio_wait(__unused void *context, unsigned microseconds)
 /* Inventory only: no stream, context, TTBR or translation-control writes. */
 static void onyx_gmu_smmu_inventory(struct onyx_rsc_io *gpucc)
 {
+    int enable = 0;
+    if (PE_parse_boot_argn("onyx_smmu_clock", &enable, sizeof(enable)) && enable == 1) {
+        printf("onyx-gen8: before HLOS1 SMMU clock vote; preserving pre-access log\n");
+        delay_for_interval(35, NSEC_PER_SEC);
+        enum onyx_clock_result vote = onyx_gen8_smmu_clock(gpucc);
+        printf("onyx-gen8: HLOS1 SMMU clock result %u readback %#x\n",
+            (unsigned)vote, gpucc->read(gpucc->context, 0x7000));
+        if (vote != ONYX_CLOCK_OK) return;
+    }
     uint32_t clock = gpucc->read(gpucc->context, 0x7000);
     if (clock & 0x80000000u) {
         printf("onyx-gen8: SMMU inventory deferred: HLOS1 SMMU clock is off (%#x)\n", clock);

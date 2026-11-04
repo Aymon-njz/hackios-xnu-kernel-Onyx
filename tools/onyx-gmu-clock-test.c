@@ -6,7 +6,7 @@ struct fake { uint32_t r[0x9800 / 4]; unsigned writes, waits, stuck, reject; uin
 static int root(uint32_t at) { return at == 0x9318 || at == 0x93ec; }
 static int branch(uint32_t at)
 {
-	return at == 0x90e4 || at == 0x93e8 || at == 0x90e8 || at == 0x90bc || at == 0x90d4;
+	return at == 0x7000 || at == 0x90e4 || at == 0x93e8 || at == 0x90e8 || at == 0x90bc || at == 0x90d4;
 }
 static int aon(uint32_t at) { return at == 0x93a4 || at == 0x9008 || at == 0x93a8 || at == 0x9004 || at == 0x90cc; }
 static uint32_t rd(void *p, uint32_t at) { assert(at < 0x9800 && !(at & 3)); return ((struct fake *)p)->r[at / 4]; }
@@ -82,5 +82,10 @@ int main(void)
 	io.quarantined = 1;
 	unsigned writes = f.writes;
 	assert(onyx_gen8_clocks_tcxo(&io, &trace) == ONYX_CLOCK_ARGUMENT && f.writes == writes);
+    reset(&f); io.quarantined=0; f.r[0x7000/4]=0x80000000;
+    assert(onyx_gen8_smmu_clock(&io)==ONYX_CLOCK_OK && f.r[0x7000/4]==1);
+    reset(&f); f.r[0x7000/4]=0x80000000; f.stuck=0x7000;
+    assert(onyx_gen8_smmu_clock(&io)==ONYX_CLOCK_TIMEOUT && io.quarantined);
+    assert(!(f.r[0x7000/4]&1));
 	puts("GMU TCXO clocks: success, CX/ownership gates, update busy, rejected config, root/branch timeouts and rollback passed");
 }

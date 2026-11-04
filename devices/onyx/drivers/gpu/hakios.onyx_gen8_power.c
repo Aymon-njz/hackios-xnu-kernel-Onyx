@@ -183,3 +183,18 @@ enum onyx_counter_result onyx_gen8_counter_sample(struct onyx_rsc_io *io,
     if (*after < *before) return ONYX_COUNTER_BACKWARDS;
     return ONYX_COUNTER_OK;
 }
+
+/* Tuna GPU_CC_HLOS1_VOTE_GPU_SMMU_CLK: BRANCH_HALT_VOTED at 0x7000. */
+enum onyx_clock_result onyx_gen8_smmu_clock(struct onyx_rsc_io *io)
+{
+ if(!io || !io->read || !io->write || !io->delay_us || !io->owned || io->quarantined)
+  return ONYX_CLOCK_ARGUMENT;
+ if((io->read(io->context,0x9080)&0x80000001u)!=0x80000000u) return ONYX_CLOCK_CX_OFF;
+ uint32_t old=io->read(io->context,0x7000);
+ io->write(io->context,0x7000,old|1u);
+ if(branch_wait(io,0x7000)) return ONYX_CLOCK_OK;
+ uint32_t now=io->read(io->context,0x7000);
+ io->write(io->context,0x7000,(now&~1u)|(old&1u));
+ io->quarantined=1;
+ return ONYX_CLOCK_TIMEOUT;
+}

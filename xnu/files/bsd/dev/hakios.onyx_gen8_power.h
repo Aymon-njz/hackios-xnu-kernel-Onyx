@@ -43,6 +43,8 @@ enum onyx_counter_result {
 enum onyx_counter_result onyx_gen8_counter_sample(struct onyx_rsc_io *io,
     uint64_t *before, uint64_t *after);
 
+enum onyx_clock_result onyx_gen8_smmu_clock(struct onyx_rsc_io *io);
+
 enum onyx_gen8_power_missing {
 	ONYX_CX_OFF = 1u << 0,
 	ONYX_CX_COLLAPSED = 1u << 1,
