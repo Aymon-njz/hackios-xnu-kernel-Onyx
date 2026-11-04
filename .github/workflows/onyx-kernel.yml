@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/workflows/onyx-kernel.yml'
       - 'xnu/**'
+      - 'devices/onyx/drivers/gpu/**'
       - 'xnu-deps/**'
       - 'xnu-build.sh'
       - 'xnu-env.sh'

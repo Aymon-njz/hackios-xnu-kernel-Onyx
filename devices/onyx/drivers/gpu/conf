@@ -16,4 +16,4 @@ driver ONYX_GEN8_CORE
 	file bsd/dev/hakios.onyx_gmu_rscc.c
 	file bsd/dev/hakios.onyx_gmu_upload.c
 	file bsd/dev/hakios.onyx_gmu_exchange.c
-	help Gen8 firmware/HFI components. onyx_gpu_stage=1..4 validate/discover; stage=5 with onyx_gpu_power=1 votes CX/MX and powers CX; stage=6 adds TCXO clock setup. GMU firmware and acceleration remain unavailable.
+	help Gen8 firmware/HFI components. onyx_gpu_stage=1..4 validate/discover; stage=5 with onyx_gpu_power=1 votes CX/MX and powers CX; stage=6 adds TCXO clock setup. Stage9 connects firmware backing, BCM metadata and power/clock bring-up; it stops before CM3 release at unresolved platform prerequisites. GMU firmware and acceleration remain unavailable.

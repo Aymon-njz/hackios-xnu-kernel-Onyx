@@ -13,6 +13,8 @@
 #include "hakios.onyx_gen8_hfi.h"
 #include "hakios.onyx_gen8_power.h"
 #include "hakios.onyx_rpmh.h"
+#include "hakios.onyx_gmu_native.h"
+#include "hakios.onyx_bcm.h"
 
 static uint8_t hfi_check_memory[ONYX_HFI_SHARED_BYTES] __attribute__((aligned(16)));
 
@@ -170,6 +172,21 @@ static void onyx_gen8_power_test(unsigned stage)
 		printf("onyx-gen8: non-echoing branch requests %#x always-on requests %#x; status checks do not prove GMU execution\n",
 		    trace.unlatched_branches, trace.unlatched_aon);
 		printf("onyx-gen8: GMU/HUB clock result %u quarantined %u\n", (unsigned)clock_result, gio.quarantined);
+        if (stage == 9 && clock_result == ONYX_CLOCK_OK && !gio.quarantined) {
+            /* Both rail votes above completed at their highest advertised
+             * levels. Retain them for PLL calibration; no down-vote here. */
+            printf("onyx-gen8: boot checkpoint PLL0 calibration; preserving pre-access log\n");
+            delay_for_interval(35, NSEC_PER_SEC);
+            enum onyx_clock_result pll = onyx_gen8_pll0_cold(&gio, 1);
+            printf("onyx-gen8: boot PLL0 result %u quarantined %u\n", (unsigned)pll, gio.quarantined);
+            if (pll != ONYX_CLOCK_OK) {
+                printf("onyx-gen8: boot startup stopped at PLL0; no domain attachment or firmware release\n");
+                return;
+            }
+            /* GPLL0's old Android clock dump is not evidence of this boot's
+             * current parent clock state. Do not manufacture readiness. */
+            printf("onyx-gen8: boot operating roots deferred: live GPLL0 parent verification missing\n");
+        }
 		static const uint32_t offsets[] = { 0x9318, 0x931c, 0x93ec, 0x93f0, 0x90d4, 0x90e4, 0x90e8, 0x90bc, 0x93a4, 0x9008, 0x93a8, 0x9004, 0x90cc, 0x9000 };
 		for (unsigned n = 0; n < sizeof(offsets) / sizeof(offsets[0]); n++)
 			printf("onyx-gen8: clock offset %#x readback %#x\n", offsets[n], gio.read(gio.context, offsets[n]));
@@ -195,7 +212,7 @@ static void onyx_gen8_power_test(unsigned stage)
                 enum onyx_counter_result sample = onyx_gen8_counter_sample(&counter_io, &before, &after);
                 printf("onyx-gen8: GMUCX counter result %u before %#llx after %#llx delta %llu; no CM3 firmware execution claimed\n",
                     (unsigned)sample, before, after, after >= before ? after - before : 0);
-                if (stage == 8 && sample == ONYX_COUNTER_OK) onyx_gmu_smmu_inventory(&gio);
+                if (stage >= 8 && sample == ONYX_COUNTER_OK) onyx_gmu_smmu_inventory(&gio);
             } else printf("onyx-gen8: GMUCX control page mapping failed\n");
         }
 
@@ -309,6 +326,43 @@ onyx_gen8_probe_gpucc(void)
 	printf("onyx-gen8: GPUCC probe complete; power and clocks unchanged; GPU is not started\n");
 }
 
+/* Stage9 connects the existing preparation and powered bring-up paths.
+ * It deliberately stops at unresolved platform prerequisites. No readiness
+ * flag or SMMU bank lease is manufactured from a boot argument. */
+static void onyx_gen8_boot(void)
+{
+    uint64_t bytes=0;
+    printf("onyx-gen8: boot integration v1 checkpoint firmware\n");
+    const void *image=hakios_image_file("fw", "gen80600_gmu.bin", &bytes, NULL);
+    if(!image || !bytes || bytes>SIZE_MAX) {
+        printf("onyx-gen8: boot stopped: missing/invalid preloaded GMU firmware\n");
+        return;
+    }
+    int prepared=onyx_gmu_native_prepare(image,(size_t)bytes);
+    printf("onyx-gen8: boot backing checkpoint result %d\n",prepared);
+    if(prepared) return;
+    vm_offset_t db=ml_io_map(0x81c60000,0x20000);
+    if(!db) { printf("onyx-gen8: boot stopped: command DB mapping failed\n");return; }
+    const char *names[]={"MC0","SH0","SH1"};
+    const unsigned widths[]={4,16,32},channels[]={4,4,2};
+    for(unsigned n=0;n<3;n++) {
+        struct onyx_bcm_resource resource;
+        int rc=onyx_bcm_lookup((const void *)db,0x20000,names[n],&resource);
+        if(rc) { printf("onyx-gen8: boot stopped: BCM %s metadata result %d\n",names[n],rc);return; }
+        /* No workload bandwidth is assumed. Compute only keepalive/enable
+         * requirements for diagnostics, not a replacement shared vote floor. */
+        struct onyx_bcm_node node={.width=widths[n],.channels=channels[n]};
+        unsigned x=0,y=0;
+        rc=onyx_bcm_aggregate(&resource,&node,1,1000,n==2?1:0,1,&x,&y);
+        if(rc) { printf("onyx-gen8: boot stopped: BCM calculation %s failed\n",names[n]);return; }
+        printf("onyx-gen8: boot BCM %s address %#x unit %u width %u vcd %u minimum %u/%u; not voted\n",
+            names[n],resource.address,resource.unit,resource.width,resource.vcd,x,y);
+    }
+    printf("onyx-gen8: boot checkpoint power and clocks\n");
+    onyx_gen8_power_test(9);
+    printf("onyx-gen8: boot integration stopped before CM3 release: shared BCM vote floors, GPLL0 verification, SMMU handoff and platform register setup unresolved\n");
+}
+
 static void
 onyx_gen8_validate(void *parameter, __unused wait_result_t result)
 {
@@ -318,6 +372,7 @@ onyx_gen8_validate(void *parameter, __unused wait_result_t result)
 	size_t count = 0;
 	uint32_t command[] = { 0x20e, 0 }; /* CORE_FW_START wire shape, not sent to hardware */
 	delay_for_interval(30, NSEC_PER_SEC);
+    if ((uintptr_t)parameter == 9) { onyx_gen8_boot(); return; }
 	if ((uintptr_t)parameter >= 5 && (uintptr_t)parameter <= 8) {
 		onyx_gen8_power_test((unsigned)(uintptr_t)parameter);
 		return;
@@ -363,7 +418,6 @@ onyx_gen8_validate(void *parameter, __unused wait_result_t result)
 	printf("onyx-gen8: GMU firmware validation status %u blocks %lu; hardware startup unavailable\n",
 	    (unsigned)status, (unsigned long)count);
     int prepare=0;
-    extern int onyx_gmu_native_prepare(const void *, size_t);
     if(status==ONYX_GEN8_FW_OK && PE_parse_boot_argn("onyx_gmu_prepare", &prepare, sizeof(prepare)) && prepare==1)
         (void)onyx_gmu_native_prepare(image,(size_t)bytes);
 
@@ -374,7 +428,7 @@ onyx_gen8_init(void)
 {
 	int stage = 0;
 	thread_t thread;
-	if (!PE_parse_boot_argn("onyx_gpu_stage", &stage, sizeof(stage)) || stage < 1 || stage > 8) return;
+	if (!PE_parse_boot_argn("onyx_gpu_stage", &stage, sizeof(stage)) || stage < 1 || stage > 9) return;
 	if (kernel_thread_start(onyx_gen8_validate, (void *)(uintptr_t)stage, &thread) == KERN_SUCCESS)
 		thread_deallocate(thread);
 }

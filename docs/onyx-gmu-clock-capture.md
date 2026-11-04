@@ -407,3 +407,22 @@ The f17238c full kernel and Linux sanitizer jobs passed. New parser/arithmetic
 host tests pass UBSan, including truncation checks and output preservation.
 No new image was flashed. No successful GMU firmware boot, GPU job, or Metal
 frame has been demonstrated; a full graphics test image is still unavailable.
+
+### Boot integration stage9
+
+`onyx_gpu_stage=9` now dispatches from the existing kernel startup thread to
+GMU firmware loading, native backing preparation, BCM metadata/calculation,
+then the existing guarded power and TCXO-clock sequence and cold PLL routine.
+Power writes retain the existing requirements: onyx_gpu_power=1, cpus=1,
+ufs_native=4, no bootcpu override. AO reads still require onyx_gmu_access=1;
+SMMU clock voting still requires onyx_smmu_clock=1. Checkpoints use kernel
+printf and therefore the existing persistent journal when persist_log and
+onyx_log_native are enabled in the image. Missing firmware stops before power
+changes. Failed preparation/metadata/PLL stops its dependent operations.
+
+This is an opt-in bring-up boot path, not complete GPU initialization. It does
+not call native_start with invented ownership or callbacks. Shared bandwidth
+vote floors, current GPLL0 verification, SMMU handoff and platform register
+configuration remain blockers before CM3 release. It cannot produce Metal
+acceleration and has not been run on hardware. Existing stage1..8 behavior is
+preserved. The boot image must actually preload fw/gen80600_gmu.bin.
