@@ -5,12 +5,43 @@ on:
     paths:
       - 'devices/onyx/drivers/gpu/**'
       - 'xnu/files/bsd/dev/hakios.onyx_gen8*.h'
+      - 'xnu/files/bsd/dev/hakios.onyx_gmu*.h'
+      - 'tools/onyx-gmu-*-test.c'
       - '.github/workflows/onyx-gen8-host.yml'
 jobs:
   firmware-parser:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - name: Validate secure CX protocol and ARM64 transport
+        run: |
+          clang -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \
+            -Ixnu/files/bsd/dev devices/onyx/drivers/gpu/hakios.onyx_gmu_scm.c \
+            tools/onyx-gmu-scm-test.c -o /tmp/onyx-gmu-scm-test
+          /tmp/onyx-gmu-scm-test
+          clang -target aarch64-none-elf -ffreestanding -std=c11 -Wall -Wextra -Werror \
+            -Ixnu/files/bsd/dev -c devices/onyx/drivers/gpu/hakios.onyx_gmu_scm.c \
+            -o /tmp/onyx-gmu-scm-arm64.o
+      - name: Validate RSCC cold and warm paths
+        run: |
+          clang -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \
+            -Ixnu/files/bsd/dev devices/onyx/drivers/gpu/hakios.onyx_gmu_rscc.c \
+            tools/onyx-gmu-rscc-test.c -o /tmp/onyx-gmu-rscc-test
+          /tmp/onyx-gmu-rscc-test
+      - name: Validate HFI startup acknowledgement
+        run: |
+          clang -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \
+            -Ixnu/files/bsd/dev devices/onyx/drivers/gpu/hakios.onyx_gmu_exchange.c \
+            devices/onyx/drivers/gpu/hakios.onyx_gen8_hfi.c \
+            tools/onyx-gmu-exchange-test.c -o /tmp/onyx-gmu-exchange-test
+          /tmp/onyx-gmu-exchange-test
+      - name: Validate TCM upload and reset guards
+        run: |
+          clang -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \
+            -Ixnu/files/bsd/dev devices/onyx/drivers/gpu/hakios.onyx_gmu_upload.c \
+            devices/onyx/drivers/gpu/hakios.onyx_gen8_firmware.c \
+            tools/onyx-gmu-upload-test.c -o /tmp/onyx-gmu-upload-test
+          /tmp/onyx-gmu-upload-test
       - name: Validate GMU clock setup and rollback paths
         run: |
           clang -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \

@@ -271,3 +271,80 @@ refusal, rejected TTBR rollback, TLB timeout, FW-init timeout and HFI-init
 timeout. These do not show hardware attachment, firmware execution, a GPU job
 or Metal rendering. Native boot-path wiring remains gated and unfinished;
 GPU ring initialization/submission/fences and Gen8 Metal remain outstanding.
+
+### TCM upload transport (not yet enabled on hardware)
+
+`onyx_gmu_upload_tcm` validates the complete vendor image before MMIO, writes
+ITCM/DTCM using the stock Gen8 window offsets, and checks every written word.
+It requires CM3 reset to remain asserted, never releases reset, and quarantines
+the transport after a readback mismatch or a lost reset during upload. External
+firmware backing and its IOMMU mapping are separate prerequisites; this helper
+alone is not a firmware-start implementation.
+
+UBSan fake-MMIO tests cover invalid images with no writes, absent ownership,
+reset refusal, dropped writes, and reset loss. The local vendor firmware gives
+139 verified TCM words in the fake transport. No physical TCM upload has yet
+been attempted. The prior kernel build 41909967488 succeeded, but no GPU job
+or Gen8 Metal frame has been demonstrated. Live domain ownership/translation,
+secure CX initialization, operating clocks/RSCC/bandwidth, HFI command ACKs,
+GPU submission/fences, and a Gen8 shader/render backend remain prerequisites.
+
+### CORE_FW_START acknowledgement transport
+
+Added a serialized HFI v2 CORE_FW_START exchange using the stock command ID14,
+zero handle, and HOST2GMU interrupt at control-page offset0x650. It checks the
+returned request header/sequence (ignoring the recording bit), propagates the
+firmware result, and quarantines an uncertain exchange after 100ms of polling.
+Other messages are delivered to a required caller callback. Local UBSan tests
+use simulated firmware and cover success, wrong sequence, firmware rejection,
+timeout, and disabled-state refusal. This component is not connected to a live
+GMU: the platform prerequisites listed above remain unresolved. It does not
+establish GPU execution or implement a Gen8 shader/render backend.
+
+### Native startup orchestration
+
+`onyx_gmu_native_start` now sequences backing preparation, SMMU attachment,
+hardware translation verification, TCM upload, platform configuration, CM3/HFI
+startup and CORE_FW_START acknowledgement. It retains mapped allocations on
+failure, rejects repeated startup attempts, and resets CM3 if the command
+exchange fails. Firmware must remain immutable through startup.
+
+This is not yet reachable from a boot stage: the Onyx platform adapter still
+needs ownership handoff, hardware translation verification, secure CX setup,
+operating clocks/RSCC and bandwidth configuration. Those operations are required
+callbacks, not fabricated readiness flags. No live startup or acceleration is
+claimed. The native orchestration has not yet passed a full XNU compilation.
+
+### RSCC wake transport
+
+Ported the stock gen8_rscc_wakeup_sequence: cold boot skips the wake request;
+a completed sleep issues AO request bit1, polls ACK bit1 then RSCC busy==0,
+and clears the request only on success. Both polls are bounded at100ms.
+Failures quarantine the transport and retain sleep state. Local UBSan tests
+cover cold boot, successful wake, ACK timeout and busy timeout. This is not
+RSCC sequencer programming or a completed platform configuration adapter.
+
+The secure path in the pinned vendor source is gen8_scm_gpu_init_cx_regs ->
+kgsl_scm_gpu_init_regs -> qcom_scm_kgsl_init_regs. The final SCM implementation
+is absent from the inspected modules tree. Its calling convention must be
+obtained before attempting an SMC. Operating PLL configuration, bandwidth votes,
+and hardware translation verification remain unimplemented. No live startup
+or bootable accelerated image has been produced by this change.
+
+### Secure CX service transport
+
+Located the missing implementation in crdroidandroid/android_kernel_xiaomi_sm8735,
+revision d0881fd7905872a11cd70bc46b37849135aa9a71, drivers/firmware/qcom_scm.c,
+qcom_scm.h and qcom_scm-smc.c. The native startup routine now calls secure CX
+initialization itself after TCM upload. It checks service availability, issues
+the standard SMC64 SIP GPU service0x28 command1, and records firmware errors.
+Qualcomm interrupted-call continuation preserves a6; the retry count is bounded.
+Firmware waitqueue responses are not supported and quarantine the transport.
+No secure service call was executed on the phone. ARM64 code generation and
+host simulated success/unavailable/error/continuation tests pass.
+
+All host component tests passed with UBSan. This remains a partial driver:
+there is no boot-stage platform adapter, proven live SMMU ownership/translation,
+operating clock and bandwidth implementation, verified GPU submission, or Gen8
+Metal shader/render backend. Do not label a kernel containing these components
+an acceleration-enabled image.
