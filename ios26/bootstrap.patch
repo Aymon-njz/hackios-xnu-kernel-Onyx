@@ -1,9 +1,9 @@
 diff --git a/ONYX_BRINGUP.md b/ONYX_BRINGUP.md
 new file mode 100644
-index 0000000..a5d1ecb
+index 0000000..06caaba
 --- /dev/null
 +++ b/ONYX_BRINGUP.md
-@@ -0,0 +1,39 @@
+@@ -0,0 +1,51 @@
 +# Onyx XNU 12377 source checkpoint
 +
 +This tree is not a bootable iOS 26 image. Base XNU is
@@ -20,13 +20,25 @@ index 0000000..a5d1ecb
 +physical distributor 0x17100000/0x10000, redistributors 0x17180000/0x100000,
 +SoC window base 0x00400000. No memory or MMIO address is borrowed from SM8550.
 +
-+bsd/dev/onyx_ufshc.c is the staged native transport from the working Onyx tree,
-+updated to consume XNU 12377 machine/pmap/cache prototypes and vm_kern_xnu.h
-+for contiguous buffer allocation. It is NOT in the BSD source list yet. It
-+still requires the RDWBLOCK loader-page adapter, logging hook, sysctl parent,
-+GPT/block-device registration and quiesce integration. No storage initialization
-+or write path is invoked by this checkpoint. The internal journal policy is
-+preserved byte-for-byte; the imported driver is not a writable installer.
++The native UFS transport, loader-page bridge and opt-in BSD initialization are
++now in the build. BSD calls onyx_dma and onyx_io_map adapters instead of
++including private machine pmap headers. Initialization requires
++onyx_ufs_probe=1 cpus=1 ufs_native=4; incompatible legacy write/test modes are
++refused. The existing exact 2 MiB capture journal policy is preserved.
++
++A 64 KiB early log ring records serial output and console writes, including
++quiet-console output. It preserves the newest tail and reports truncation.
++The platform expert registers one boot CPU. Native architectural PAC setup
++and a standalone arm64e threaded-starts linker path are included. PAC keys are
++shared development keys; this is not production isolation or validated
++hardware startup.
++
++Actual local arm64e compiler checks passed for the GIC, log ring, machine DMA
++adapter, platform expert and three Onyx BSD storage files. The full local
++build currently stops because its verified IIG cache lacks TestDextRematch.h;
++full Xcode CI generates that interface with the real tool. Firehose source
++headers must be exported with KERNEL and OS_FIREHOSE_SPI enabled. The native
++firehose archive was rebuilt as arm64e. No complete kernel link has passed.
 +
 +Run: sh onyx-tests/run.sh
 +
@@ -35,7 +47,7 @@ index 0000000..a5d1ecb
 +malformed DT size/layout refusal before mapping; CPU gate; redistributor and
 +RWP timeout; exact journal range, CRC and 288 command mutations. The GIC test
 +uses fake MMIO and kernel API shims. It is not a kernel ABI build or hardware
-+qualification. No first-boot kernel is linked here.
++qualification. No first-boot kernel is linked here. The log-ring wrap and tail tests also pass.
 +
 +Before hardware use: complete the non-Apple startup/CPU/pmap platform patches,
 +prepare the matching compiler/KDK/SDK/dependency archives, compile/link this
@@ -4211,7 +4223,7 @@ index 3534454..323c3a3 100644
  .SFLAGS: ALWAYS
  	$(_v)$(REPLACECONTENTS) $@ $(S_KCC) $(SFLAGS) $(INCFLAGS)
 diff --git a/makedefs/MakeInc.def b/makedefs/MakeInc.def
-index e37762b..4f1a84b 100644
+index e37762b..55a2cb1 100644
 --- a/makedefs/MakeInc.def
 +++ b/makedefs/MakeInc.def
 @@ -29,7 +29,7 @@ SUPPORTED_ARM64_MACHINE_CONFIGS = NONE
@@ -4262,7 +4274,31 @@ index e37762b..4f1a84b 100644
  endif
  
  #
-@@ -1604,3 +1616,9 @@ INSTALL_KASAN_ONLY = 1
+@@ -1190,6 +1202,15 @@ ifeq ($(EXCLAVES_ENABLED),1)
+ endif # !EXCLAVES_ENABLED
+ 
+ 
++# Onyx has no Apple Exclaves execution environment. Do not auto-link the
++# macOS KDK's Tightbeam archive into the generic iOS cross-build merely
++# because that archive exists on the build host.
++ifeq ($(CURRENT_MACHINE_CONFIG),BCM2837)
++ifeq ($(EXCLAVES_ENABLED),1)
++$(error Generic Onyx target cannot enable Apple Exclaves)
++endif
++XNU_CONFIG_TIGHTBEAM := 0
++else
+ ifneq ($(wildcard $(SDKROOT)/usr/local/lib/kernel/platform/libTightbeam.a),)
+ XNU_CONFIG_TIGHTBEAM := 1
+ TIGHTBEAM_IN_SDK := 1
+@@ -1206,6 +1227,7 @@ ifeq ($(XNU_CONFIG_TIGHTBEAM),1)
+     TIGHTBEAM_EXPORTS := $(KDKROOT)/usr/local/lib/kernel/platform/libTightbeam.exports
+   endif # TIGHTBEAM_IN_SDK
+ endif
++endif # non-generic Apple target
+ 
+ #
+ # DTrace support
+@@ -1604,3 +1626,9 @@ INSTALL_KASAN_ONLY = 1
  endif
  
  # vim: set ft=make:
