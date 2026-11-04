@@ -75,4 +75,11 @@ onyx_gen8_power_missing(uint32_t cx, uint32_t gmu, uint32_t cxo,
  */
 enum onyx_clock_result onyx_gen8_clocks_operating(struct onyx_rsc_io *,
  unsigned supplies_ready, unsigned gpll0_600mhz_verified);
+/* Cold, exclusively owned Lucid OLE PLL0 only. Caller has completed CX/MX
+ * votes sufficient for the 1305.6MHz calibration point and keeps them held.
+ * Both GMU/HUB roots must still use TCXO; no other PLL consumer is permitted.
+ * Programs Tuna's stock 1GHz configuration, calibrates, then enables /2.
+ */
+enum onyx_clock_result onyx_gen8_pll0_cold(struct onyx_rsc_io *,
+ unsigned calibration_supplies_ready);
 #endif

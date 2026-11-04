@@ -42,4 +42,12 @@ enum onyx_rsc_result {
 enum onyx_rsc_result onyx_rsc_vote(struct onyx_rsc_io *io, uint32_t version,
     unsigned slot, const struct onyx_rpmh_resource *resource,
     unsigned requested, unsigned existing);
+/* Active BCM write using command-DB validated address and encoded units.
+ * existing_x/y must be known vote floors, not guessed from TCS remnants.
+ * Caller aggregates all shared path users and retains the votes until reset.
+ * This is the transport, not the Hz/bandwidth aggregation or route discovery.
+ */
+enum onyx_rsc_result onyx_rsc_bcm_vote(struct onyx_rsc_io *, uint32_t version,
+ unsigned slot, uint32_t address, unsigned x, unsigned y,
+ unsigned existing_x, unsigned existing_y);
 #endif

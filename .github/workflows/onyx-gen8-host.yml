@@ -15,6 +15,12 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - name: Validate cold PLL calibration
+        run: |
+          clang -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \
+            -Ixnu/files/bsd/dev devices/onyx/drivers/gpu/hakios.onyx_gen8_power.c \
+            tools/onyx-gmu-pll-test.c -o /tmp/onyx-gmu-pll-test
+          /tmp/onyx-gmu-pll-test
       - name: Validate QTB translation and operating clock transports
         run: |
           clang -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \

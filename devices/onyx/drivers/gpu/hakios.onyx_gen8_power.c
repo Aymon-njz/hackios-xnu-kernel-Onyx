@@ -240,3 +240,50 @@ rollback:
  io->quarantined=1;
  return result;
 }
+
+/* Lucid OLE offsets/configuration from gpucc-tuna.c; reset/calibration
+ * sequence from clk-alpha-pll.c _alpha_pll_lucid_evo_prepare/enable. */
+enum onyx_clock_result onyx_gen8_pll0_cold(struct onyx_rsc_io *io,unsigned supplies)
+{
+ if(!io || !io->read || !io->write || !io->delay_us || !io->owned ||
+     io->quarantined || supplies!=1) return ONYX_CLOCK_ARGUMENT;
+ if((io->read(io->context,0x9080)&0x80000001u)!=0x80000000u) return ONYX_CLOCK_CX_OFF;
+ uint32_t mode=io->read(io->context,0);
+ if((mode&0x80000005u) || io->read(io->context,4)!=0 ||
+     (io->read(io->context,0x10)&0xffffu) ||
+     (io->read(io->context,0x18)&(1u<<25)) ||
+     (io->read(io->context,0x931c)&0x71f)!=1 ||
+     (io->read(io->context,0x93f0)&0x71f)!=1 ||
+     (io->read(io->context,0x9318)&1) || (io->read(io->context,0x93ec)&1))
+  return ONYX_CLOCK_ARGUMENT;
+ static const uint32_t offset[]={0x10,0x14,0x20,0x24,0x28,0x18,0x1c,0x2c,0x30,0x34,0x38};
+ static const uint32_t value[]={0x44440034,0x1555,0x20485699,0x00182261,0x82aa299c,
+     0x407,5,0,3,0x9000,0x34};
+ enum onyx_clock_result result=ONYX_CLOCK_READBACK;
+ for(unsigned n=0;n<sizeof(offset)/sizeof(offset[0]);n++) {
+  io->write(io->context,offset[n],value[n]);
+  if(io->read(io->context,offset[n])!=value[n]) goto fail;
+ }
+ /* Calibration runs before enabling the global output. Keep the supply
+  * floor held throughout calibration, standby and the final enable. */
+ io->write(io->context,0,(mode&~1u)|4u);
+ io->write(io->context,4,1);
+ result=ONYX_CLOCK_TIMEOUT;
+ if(!clock_wait(io,0,0x80000100u,0x80000000u)) goto fail;
+ /* Stock prepare returns the calibrated PLL to standby. */
+ io->write(io->context,4,0);
+ io->write(io->context,4,1);
+ if(!clock_wait(io,0,0x80000000u,0x80000000u)) goto fail;
+ io->write(io->context,0,io->read(io->context,0)|1u);
+ if((io->read(io->context,0)&0x80000005u)!=0x80000005u) {
+  result=ONYX_CLOCK_READBACK;goto fail;
+ }
+ return ONYX_CLOCK_OK;
+fail:
+ /* The roots never left TCXO, so this PLL has no active consumer. */
+ io->write(io->context,0,io->read(io->context,0)&~1u);
+ io->write(io->context,4,0);
+ io->write(io->context,0,io->read(io->context,0)&~4u);
+ io->quarantined=1;
+ return result;
+}

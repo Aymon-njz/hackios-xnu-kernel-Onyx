@@ -2,7 +2,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
-struct fake { uint32_t r[0x10000 / 4]; unsigned writes, delays, complete, reject; };
+struct fake { uint32_t r[0x10000 / 4]; unsigned writes, delays, complete, reject; uint32_t submitted_address, submitted_data; };
 static uint32_t read_reg(void *p, uint32_t offset) { return ((struct fake *)p)->r[offset / 4]; }
 static void write_reg(void *p, uint32_t offset, uint32_t value)
 {
@@ -14,7 +14,7 @@ static void write_reg(void *p, uint32_t offset, uint32_t value)
 	if (offset == 0xd08) f->r[0xd04 / 4] &= ~value;
 	else f->r[offset / 4] = value;
 	if (offset == 0xfc4 && value == 0x1010000 && f->complete && (f->r[0xd00 / 4] & 2))
-		f->r[0xd04 / 4] |= 2;
+		{ f->r[0xd04 / 4] |= 2; f->submitted_address=f->r[0xfd8/4]; f->submitted_data=f->r[0xfdc/4]; }
 }
 static void pause_us(void *p, unsigned us) { assert(us == 10); ((struct fake *)p)->delays++; }
 static void reset(struct fake *f)
@@ -65,5 +65,14 @@ int main(void)
 	assert(onyx_rsc_vote(&io, 0x30800, 1, &rail, 0x10, 0) == ONYX_RSC_READBACK && io.quarantined);
 	reset(&f); io.quarantined = 0;
 	assert(onyx_rsc_vote(&io, 0x30800, 0, &rail, 0x10, 0) == ONYX_RSC_INVALID && !f.writes);
+	reset(&f);io.quarantined=0;
+	assert(onyx_rsc_bcm_vote(&io,0x30800,1,0x50000,1,20,10,2)==ONYX_RSC_OK);
+	assert(f.submitted_address==0x50000 && f.submitted_data==(0x60000000u|(10u<<14)|20));
+	reset(&f);
+	assert(onyx_rsc_bcm_vote(&io,0x30800,1,0x30000,1,1,0,0)==ONYX_RSC_INVALID && !f.writes);
+	assert(onyx_rsc_bcm_vote(&io,0x30800,1,0x50000,0,0,0,0)==ONYX_RSC_INVALID && !f.writes);
+	assert(onyx_rsc_bcm_vote(&io,0x30800,1,0x50000,0x4000,1,0,0)==ONYX_RSC_INVALID && !f.writes);
+	f.complete=0;
+	assert(onyx_rsc_bcm_vote(&io,0x30800,1,0x50000,1,1,0,0)==ONYX_RSC_TIMEOUT && io.quarantined);
 	puts("RSC transport: completion/restoration, ownership, occupied slot, solver, timeout quarantine and rejected writes passed");
 }

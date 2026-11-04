@@ -372,3 +372,22 @@ host tests at this point. Recovery dmesg reports GPU SMMU 22 banks,24 groups,
 not proof of context ownership in a later XNU handoff. Recovery has no active
 KGSL class device from which to verify a live GPU workload. GPU execution and
 bandwidth remain unimplemented; no acceleration-ready test image is claimed.
+
+### Cold PLL and BCM command transport
+
+Added a cold-only Lucid OLE PLL0 configuration/calibration routine using Tuna's
+stock coefficients. It refuses running/initialized/FSM PLLs and non-TCXO roots,
+requires completed calibration-level supply votes, waits for calibration/lock,
+and disables output/reset on failure. Tests cover success, an already-active
+PLL, rejected configuration and timeout cleanup. No physical calibration test
+has run, and the boot-stage caller is still missing.
+
+Refactored the tested single-command RSC transport for both ARC and BCM writes.
+The BCM entry point validates the hardware address class and14-bit vote fields,
+preserves caller-provided vote floors, emits COMMIT/VALID, and waits for the same
+TCS completion. Simulated tests cover encoding, floor preservation, invalid
+addresses/values and timeout. This does not supply the missing command-DB BCM
+metadata parser, shared-route vote aggregation or boot-stage bandwidth setup.
+Tuna's GPU route includes SH1 (enable mask), SH0 and MC0 (bandwidth resources).
+Their actual units/widths/addresses and current aggregate vote floors must be
+resolved before enabling the native path. GPU execution remains unimplemented.

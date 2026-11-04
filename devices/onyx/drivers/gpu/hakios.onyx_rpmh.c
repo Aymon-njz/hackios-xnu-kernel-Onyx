@@ -8,15 +8,13 @@ static int write_checked(struct onyx_rsc_io *io, uint32_t offset, uint32_t value
 	return io->read(io->context, offset) == value;
 }
 
-enum onyx_rsc_result
-onyx_rsc_vote(struct onyx_rsc_io *io, uint32_t version, unsigned slot,
-    const struct onyx_rpmh_resource *resource, unsigned requested, unsigned existing)
+static enum onyx_rsc_result
+onyx_rsc_write(struct onyx_rsc_io *io, uint32_t version, unsigned slot,
+    uint32_t address, uint32_t index)
 {
 	struct onyx_rsc_layout l;
-	uint32_t address, index;
 	if (!io || !io->read || !io->write || !io->delay_us || slot < 1 || slot > 2 ||
-	    onyx_rsc_layout(version, &l) ||
-	    onyx_rpmh_arc_vote(resource, requested, existing, &address, &index)) return ONYX_RSC_INVALID;
+	    onyx_rsc_layout(version, &l)) return ONYX_RSC_INVALID;
 	if (!io->owned || io->quarantined) return ONYX_RSC_NOT_OWNED;
 	uint32_t base = 0xd00 + slot * 0x2a0, bit = 1u << slot;
 	/* Refuse solver mode, pending IRQ, enabled commands or an active trigger.
@@ -166,4 +164,25 @@ int onyx_rpmh_lookup(const void *database, size_t bytes, const char *name,
 	if (!found) return 1;
 	*resource = result;
 	return 0;
+}
+
+enum onyx_rsc_result onyx_rsc_vote(struct onyx_rsc_io *io,uint32_t version,unsigned slot,
+ const struct onyx_rpmh_resource *resource,unsigned requested,unsigned existing)
+{
+ uint32_t address,index;
+ if(onyx_rpmh_arc_vote(resource,requested,existing,&address,&index)) return ONYX_RSC_INVALID;
+ return onyx_rsc_write(io,version,slot,address,index);
+}
+enum onyx_rsc_result onyx_rsc_bcm_vote(struct onyx_rsc_io *io,uint32_t version,unsigned slot,
+ uint32_t address,unsigned x,unsigned y,unsigned existing_x,unsigned existing_y)
+{
+ if(((address>>16)&7)!=5 || (address&3) || x>0x3fff || y>0x3fff ||
+     existing_x>0x3fff || existing_y>0x3fff) return ONYX_RSC_INVALID;
+ if(x<existing_x)x=existing_x;
+ if(y<existing_y)y=existing_y;
+ /* Never silently remove a shared bandwidth vote. */
+ if(!x && !y)return ONYX_RSC_INVALID;
+ /* BCM: COMMIT bit30, VALID bit29, X[27:14], Y[13:0]. A single
+  * request commits one resource; callers must serialize whole path votes. */
+ return onyx_rsc_write(io,version,slot,address,0x60000000u|(x<<14)|y);
 }
