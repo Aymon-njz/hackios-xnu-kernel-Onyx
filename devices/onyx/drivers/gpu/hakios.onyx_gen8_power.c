@@ -287,3 +287,35 @@ fail:
  io->quarantined=1;
  return result;
 }
+
+static int gpll0_sample(struct onyx_rsc_io *io,uint64_t *rate)
+{
+ uint32_t mode=io->read(io->context,0),op=io->read(io->context,4);
+ uint32_t l=io->read(io->context,0x10),alpha=io->read(io->context,0x14);
+ *rate=19200000ULL*(l&0xffffu)+((19200000ULL*(alpha&0xffffu))>>16);
+ return (mode&0x80000005u)==0x80000005u && op==1 &&
+     *rate>=599999000ULL && *rate<=600001000ULL &&
+     io->read(io->context,0x10)==l && io->read(io->context,0x14)==alpha &&
+     (io->read(io->context,0)&0x80000005u)==0x80000005u;
+}
+enum onyx_clock_result onyx_gen8_gpll0_parent(struct onyx_rsc_io *io,uint64_t *rate)
+{
+ if(!io || !io->read || !io->write || !io->delay_us || !io->owned ||
+     io->quarantined || !rate) return ONYX_CLOCK_ARGUMENT;
+ *rate=0;
+ if(!gpll0_sample(io,rate))return ONYX_CLOCK_ARGUMENT;
+ uint32_t old=io->read(io->context,0x71150);
+ io->write(io->context,0x71150,old|1u);
+ enum onyx_clock_result result=ONYX_CLOCK_READBACK;
+ if(!(io->read(io->context,0x71150)&1))goto fail;
+ result=ONYX_CLOCK_TIMEOUT;
+ if(!branch_wait(io,0x71150))goto fail;
+ result=ONYX_CLOCK_READBACK;
+ if(!gpll0_sample(io,rate))goto fail;
+ return ONYX_CLOCK_OK;
+fail:
+ /* Restore our branch request only; the shared parent remains untouched. */
+ io->write(io->context,0x71150,(io->read(io->context,0x71150)&~1u)|(old&1));
+ io->quarantined=1;
+ return result;
+}

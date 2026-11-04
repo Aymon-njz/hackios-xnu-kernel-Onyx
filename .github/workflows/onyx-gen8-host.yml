@@ -23,6 +23,12 @@ jobs:
             -Ixnu/files/bsd/dev devices/onyx/drivers/gpu/hakios.onyx_bcm.c \
             tools/onyx-bcm-test.c -o /tmp/onyx-bcm-test
           /tmp/onyx-bcm-test
+      - name: Validate live GPLL0 parent checks
+        run: |
+          clang -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \
+            -Ixnu/files/bsd/dev devices/onyx/drivers/gpu/hakios.onyx_gen8_power.c \
+            tools/onyx-gmu-parent-clock-test.c -o /tmp/onyx-gmu-parent-clock-test
+          /tmp/onyx-gmu-parent-clock-test
       - name: Validate cold PLL calibration
         run: |
           clang -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \

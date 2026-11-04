@@ -426,3 +426,43 @@ vote floors, current GPLL0 verification, SMMU handoff and platform register
 configuration remain blockers before CM3 release. It cannot produce Metal
 acceleration and has not been run on hardware. Existing stage1..8 behavior is
 preserved. The boot image must actually preload fw/gen80600_gmu.bin.
+
+### Verified stage9 hardware result: gmu-boot9-41917443705
+
+Retrieved from OrangeFox after restoring Android boot_a. Partition SHA256
+matches backup2c7228ca8cf4e766b899458175e67f693de397fcff3a486a77ba98852acaaa72.
+Journal decoder verified native snapshot11,711661 bytes, unique run ID,
+no console wrapping or capacity exhaustion. Local capture:
+out/logs/gmu-boot9-41917443705/kernel.log.
+
+At48.97s native backing succeeded: seven regions, six tables, TTBR physical
+0x8cb390000; software walks verified only. Live BCM metadata matches saved
+MC0/SH0/SH1 data. CX/MX votes and CX power-on returned0. TCXO setup returned0.
+At84.007s cold PLL calibration returned0 without quarantine. Operating root
+switching was intentionally deferred for missing live GPLL0 verification.
+AO counter advanced22090 ticks; SMMU clock vote succeeded. At189s all24 SMRs
+were invalid (SMR0,S2CR0x20000), all22 global bank metadata pairs were zero.
+No bank was attached; empty metadata is not proof of ownership.
+
+Boot integration explicitly stopped before CM3 release with the outstanding
+shared vote floors, GPLL0 verification, SMMU handoff and platform register
+configuration. Framebuffer logs continue through221.93s. No kernel panic was
+found in this capture. This demonstrates physical calibration and backing
+allocation, not GMU firmware execution, GPU jobs or accelerated presentation.
+Phone left in OrangeFox recovery with Android boot_a restored.
+
+### Live GPLL0 parent verification wired into stage9
+
+After successful cold PLL0 calibration, stage9 now maps GCC0x100000 and checks
+GPLL0 Lucid OLE L/alpha, opmode and lock/output/reset bits against600MHz (1kHz
+tolerance). It only votes the GPU-specific GCC CPH branch at offset0x71150,
+polls branch status, rechecks the parent, then invokes the previously tested
+500MHz GMU/200MHz HUB root switch. It never changes shared GPLL0 configuration.
+On branch or parent failure it restores its branch vote and quarantines the
+transport. Register simulations cover wrong frequency/no writes, rejected
+branch vote, branch timeout and parent lock loss. Hardware validation pending.
+
+Bandwidth aggregation and BCM transport exist, but the boot path still lacks
+established shared vote floors. The SMMU lease still needs a platform ownership
+handoff; zero bank metadata is not used as a substitute. These remain unresolved
+and CM3 release remains disabled. This patch does not complete all three items.

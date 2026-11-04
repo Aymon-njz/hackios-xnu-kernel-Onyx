@@ -82,4 +82,9 @@ enum onyx_clock_result onyx_gen8_clocks_operating(struct onyx_rsc_io *,
  */
 enum onyx_clock_result onyx_gen8_pll0_cold(struct onyx_rsc_io *,
  unsigned calibration_supplies_ready);
+/* GCC-relative I/O, minimum mapped length0x71154. Validate running GPLL0
+ * from live Lucid OLE rate/lock registers, then enable only the GPU's CPH
+ * branch. Never reprogram the shared GPLL0. Ownership covers that branch.
+ */
+enum onyx_clock_result onyx_gen8_gpll0_parent(struct onyx_rsc_io *, uint64_t *rate);
 #endif

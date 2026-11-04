@@ -183,9 +183,21 @@ static void onyx_gen8_power_test(unsigned stage)
                 printf("onyx-gen8: boot startup stopped at PLL0; no domain attachment or firmware release\n");
                 return;
             }
-            /* GPLL0's old Android clock dump is not evidence of this boot's
-             * current parent clock state. Do not manufacture readiness. */
-            printf("onyx-gen8: boot operating roots deferred: live GPLL0 parent verification missing\n");
+            printf("onyx-gen8: next live GCC GPLL0 check and GPU CPH branch vote; saving log\n");
+            delay_for_interval(35, NSEC_PER_SEC);
+            vm_offset_t gcc=ml_io_map(0x00100000,0x72000);
+            if(!gcc) { printf("onyx-gen8: GCC mapping failed\n");return; }
+            struct onyx_rsc_io gcio={(void *)gcc,onyx_gpu_mmio_read,
+                onyx_gpu_mmio_write,onyx_gpu_mmio_wait,1,0};
+            uint64_t parent_rate=0;
+            enum onyx_clock_result parent=onyx_gen8_gpll0_parent(&gcio,&parent_rate);
+            printf("onyx-gen8: live GPLL0 result %u rate %llu branch %#x quarantine %u\n",
+                (unsigned)parent,parent_rate,gcio.read(gcio.context,0x71150),gcio.quarantined);
+            if(parent!=ONYX_CLOCK_OK)return;
+            enum onyx_clock_result operating=onyx_gen8_clocks_operating(&gio,1,1);
+            printf("onyx-gen8: operating roots result %u GMU CFG %#x HUB CFG %#x quarantine %u\n",
+                (unsigned)operating,gio.read(gio.context,0x931c),gio.read(gio.context,0x93f0),gio.quarantined);
+            if(operating!=ONYX_CLOCK_OK)return;
         }
 		static const uint32_t offsets[] = { 0x9318, 0x931c, 0x93ec, 0x93f0, 0x90d4, 0x90e4, 0x90e8, 0x90bc, 0x93a4, 0x9008, 0x93a8, 0x9004, 0x90cc, 0x9000 };
 		for (unsigned n = 0; n < sizeof(offsets) / sizeof(offsets[0]); n++)
@@ -360,7 +372,7 @@ static void onyx_gen8_boot(void)
     }
     printf("onyx-gen8: boot checkpoint power and clocks\n");
     onyx_gen8_power_test(9);
-    printf("onyx-gen8: boot integration stopped before CM3 release: shared BCM vote floors, GPLL0 verification, SMMU handoff and platform register setup unresolved\n");
+    printf("onyx-gen8: boot integration stopped before CM3 release: shared BCM vote floors, SMMU handoff and platform register setup unresolved (see clock checkpoint results)\n");
 }
 
 static void
