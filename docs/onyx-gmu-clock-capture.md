@@ -243,3 +243,31 @@ can still request WB or unprivileged access explicitly. Physical allocation
 and cache maintenance are kernel APIs, but their hardware behavior has not
 yet been exercised by this new code. Live attachment and firmware start
 remain blocked on route/context validation, not simulated as completed.
+
+## SMMU attachment / CM3 start control implementations
+
+The low-level onyx_gmu_attach transport now installs an explicitly leased
+private context using the measured Onyx SMMU IDs and 32-bit IOVA/36-bit PA
+configuration. The generic table builder's wider PA capability is restricted
+to measured IDR2.OAS=1 at attachment. It checks existing stream routes, an
+empty disabled bank, published tables and reset/handoff prerequisites before
+writing. It configures CBAR/CBA2R, TCR/TCR2, TTBR and MAIR, invalidates the
+ASID with a bounded TLB synchronization, enables translation and publishes
+an exact SID5 match last. Readback or timeout failures remove the new route,
+disable translation, restore saved configuration and quarantine the domain.
+No caller currently grants a live context lease or invokes this transport.
+Register readback is not hardware translation proof: ATOSNS is set in IDR0.
+
+onyx_gmu_start implements CM3 reset release and bounded firmware-init/HFI
+hardware-init polling from the pinned Gen8 driver. All platform prerequisites
+must be real verified results: domain attachment, translation verification,
+firmware upload, secure CX initialization, complete register configuration,
+operating clocks, RSCC and DDR bandwidth. This function does not implement
+those missing prerequisites. Failure reasserts reset and quarantines I/O.
+HFI hardware initialization is not a CORE_FW_START command acknowledgement.
+
+Fake-MMIO tests cover ownership/no-write gates, installation, occupied stream
+refusal, rejected TTBR rollback, TLB timeout, FW-init timeout and HFI-init
+timeout. These do not show hardware attachment, firmware execution, a GPU job
+or Metal rendering. Native boot-path wiring remains gated and unfinished;
+GPU ring initialization/submission/fences and Gen8 Metal remain outstanding.

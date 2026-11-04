@@ -8,4 +8,6 @@ driver ONYX_GEN8_CORE
 	file bsd/dev/hakios.onyx_gmu_mmu.c
 	file bsd/dev/hakios.onyx_gmu_memory.c
 	file bsd/dev/hakios.onyx_gmu_native.c
+	file bsd/dev/hakios.onyx_gmu_attach.c
+	file bsd/dev/hakios.onyx_gmu_start.c
 	help Gen8 firmware/HFI components. onyx_gpu_stage=1..4 validate/discover; stage=5 with onyx_gpu_power=1 votes CX/MX and powers CX; stage=6 adds TCXO clock setup. GMU firmware and acceleration remain unavailable.
